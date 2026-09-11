@@ -1,0 +1,105 @@
+name: build-publish
+
+# 合并页构建与发布（方案 §5/§6）。每天两次（盘前 08:12 / 盘后 17:35 北京时间）。
+# 主通道 = GitHub Pages（必发，URL 稳定）；HSK = best-effort 镜像（失败即跳过，绝不影响 Pages）。
+#
+# carry-forward（§4.5）：state/payload/ 入 git，检出即得上次成功版本；build_payloads 只覆盖
+#   "本次能自产"的域，缺数据的域保留上次信封 -> 任一域挂掉，合并页当天照常发布、那格显示旧数据。
+
+on:
+  schedule:
+    - cron: '12 0 * * 1-5'      # 北京 08:12 盘前
+    - cron: '35 9 * * 1-5'      # 北京 17:35 盘后
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["strategy-pm", "strategy-am"]
+    types: [completed]
+
+concurrency:
+  group: pages                  # ★ cancel-in-progress 必须 false（否则 08:12 的发布被 21:00 补跑取消）
+  cancel-in-progress: false
+
+permissions:
+  contents: write               # 提交 state/payload + state/publish
+  pages: write                  # 部署 Pages
+  id-token: write               # deploy-pages 的 OIDC
+
+jobs:
+  build-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r common/requirements.txt
+
+      - name: 自产 payload（缺数据的域保留上次信封 = carry-forward）
+        run: python -m tools.build_payloads --repo-root . --out state/payload
+
+      - name: 构建单页壳（自包含 + 注入 payload）
+        run: |
+          mkdir -p dist
+          python -m web.build --src domains --out dist/index.html --payload-dir state/payload
+          touch dist/.nojekyll
+
+      - name: D4 相对路径断言（产物不得出现 href="/ 或 src="/，将来挂域名零改动）
+        run: |
+          if grep -qE '(href|src)="/' dist/index.html; then
+            echo "::error::产物含绝对路径 href=\"/ 或 src=\"/ —— 违反 D4，挂自定义域名会 404"
+            grep -noE '(href|src)="/[^"]*"' dist/index.html | head
+            exit 1
+          fi
+          echo "✓ 全部相对路径"
+
+      - name: 体积门禁（>800KB warning，>1.5MB error，不阻塞）
+        run: |
+          SZ=$(wc -c < dist/index.html)
+          echo "产物体积: $SZ bytes"
+          [ "$SZ" -gt 800000 ]  && echo "::warning::单页 $SZ B > 800KB"
+          [ "$SZ" -gt 1500000 ] && echo "::error::单页 $SZ B > 1.5MB（考虑 §5.5 抽样/拆分）"
+          true
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传 Pages 产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: 部署到 GitHub Pages（主通道，必发）
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: HSK best-effort 镜像（失败即跳过，绝不影响 Pages）
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          HSK_API_KEY: ${{ secrets.HSK_API_KEY }}
+          HSK_RESOURCE_ID: ${{ vars.HSK_RESOURCE_ID }}
+        run: python -m tools.publish_cli --content dist/index.html --domain merged \
+             --resource-file state/data/hsk-resource.json --state state/publish
+
+      - name: 提交 payload / 发布记录（carry-forward 留档 + 资源 ID 持久化）
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/payload state/publish state/data/hsk-resource.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "无状态变化，跳过提交"
+          else
+            git commit -m "publish: 合并页 $(date -u +'%F %H:%M') UTC [run ${{ github.run_number }}]"
+            git pull --rebase --autostash || true
+            git push
+          fi

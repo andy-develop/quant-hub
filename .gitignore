@@ -1,7 +1,12 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-state/publish/*.json
-state/payload/*.json
 web/dist/
 *.log
+
+# ★ state/payload 与 state/publish 入 git（方案 §3/§4.5）：
+#   payload = carry-forward 的"上次成功信封"，publish = HSK 幂等指纹与资源留档。
+#   此前被忽略会让"任一域挂掉用上版顶上"失效，故取消忽略。
+# 仅忽略本地数据版本与临时件：
+state/**/.local.json
+*.tmp
