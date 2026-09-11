@@ -41,6 +41,10 @@ pytest tests/ -q                      # 合并层基础设施 243 项（common/w
   经 `bootstrap.py` sparse-checkout 挂载到 `data/`，**不进本代码仓**。
 - `selected/data/prices.json`、`factors.json` 目前是空对象 —— 这是 §9.1 记录的
   "个性化域数据链路实际上是坏的"现状。合并期**不动它**（改从统一 hfq 库派生是 Phase-4 事项）。
+- **合并期唯一的测试层工程适配**：给 `shortterm/tests/test_report_payload.py::test_st_banner_type`
+  加了"缺 `data/meta/st_history.parquet` 则 skip"的守卫（与其 `modes` fixture 同口径）。
+  该用例校验的是"ST 数据存在时的新鲜度横幅文案"，未挂载 data/ 时 `_st_banner_html()`
+  返回的是合法的"数据文件缺失"第三态。**不改断言、不改策略**，data/ 挂载后照常跑。
 
 ## 构建合并页（自包含，无需再检出三个老仓）
 

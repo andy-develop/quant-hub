@@ -59,11 +59,11 @@ jobs:
           # 数据流水线（quant-hub-data）才用 pinned env。
           - domain: shortterm
             python-version: '3.11'
-            deps: 'numpy>=1.26 pandas>=2.2 pyarrow>=15 requests pytest'
+            deps: '"numpy>=1.26" "pandas>=2.2" "pyarrow>=15" requests pytest'
           # ETF（red-dividend-strategy）：版本上限锁定（见其 requirements.txt 注释）
           - domain: etf
             python-version: '3.11'
-            deps: 'pandas>=2.0,<2.3 numpy>=1.24,<2.3 pytest'
+            deps: '"pandas>=2.0,<2.3" "numpy>=1.24,<2.3" pytest'
           # 个性化选股（stock-factor-engine）：纯标准库
           - domain: selected
             python-version: '3.11'

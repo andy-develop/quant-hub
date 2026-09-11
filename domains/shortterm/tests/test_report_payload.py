@@ -38,6 +38,12 @@ class TestPayload:
 
     def test_st_banner_type(self):
         """ST 数据新鲜度横幅: 当前滞后小应返回空串或含'截至'提示, 都必须是 str。"""
+        import os
+        # 产物依赖：合并仓的行情数据在私有仓 quant-hub-data，未挂载 data/ 时
+        # _st_banner_html() 返回的是"数据文件缺失"横幅（合法的第三态），
+        # 本用例只校验"数据存在时的新鲜度文案"，故缺产物时跳过（与 modes fixture 同口径）。
+        if not os.path.exists(f"{engine.BASE}/data/meta/st_history.parquet"):
+            pytest.skip("ST 产物不存在 (合并仓未挂载 data/，产物依赖测试跳过)")
         banner = build_report._st_banner_html()
         assert isinstance(banner, str)
         if banner:
