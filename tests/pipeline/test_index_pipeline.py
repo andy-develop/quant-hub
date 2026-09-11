@@ -126,3 +126,11 @@ def test_freshness_gate_red_when_stale(prepared):
     future = dt.date(2026, 12, 31)
     level, gate = IDX.freshness_gate({"sh000001": d, "sz399001": d}, cal, future)
     assert level == "red"
+
+
+def test_verify_passes_on_prepared_data(prepared):
+    """verify.py 对落盘数据返回 0 —— 锁住 seal 后 manifest 清理（否则僵尸 _incr 条目会判红）。"""
+    from tools.data_pipeline import verify as V
+    root, *_ = prepared
+    rc = V.main(["--data-root", root])
+    assert rc == 0

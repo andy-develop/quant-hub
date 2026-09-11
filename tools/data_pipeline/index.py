@@ -175,6 +175,9 @@ def backfill_daily(df, root: str, writer: str, pd=None) -> int:
         write_incremental(g, "index", FQ, first, root=root, writer=writer,
                           allow_overwrite=True, pd=pd)
         seal_partition("index", FQ, int(y), int(m), root=root, writer=writer, pd=pd)
+    # seal 删掉了 _incr 分片，但其 manifest 条目仍在 -> 清理，让 manifest 与磁盘一致
+    from tools.data_pipeline import prune_manifest
+    prune_manifest(root, "index", FQ)
     return len(months)
 
 
