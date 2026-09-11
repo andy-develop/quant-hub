@@ -281,6 +281,17 @@ def month_key(d: _dt.date | str) -> str:
 # ---------------------------------------------------------------------------
 # 加载：优先 parquet（数据集仓交付形态），回退 CSV（ETF 域现成件）
 # ---------------------------------------------------------------------------
+def _check_not_expired(cal: "TradeCalendar") -> None:
+    """H6：日历过期（max_date < today）比没有日历更危险 —— 会让 H2 闸门把交易日误判为休市。
+
+    仅 'error' 级（已过期）抛 CalendarExpired；'warning' 级（覆盖不足 today+90d）不抛，
+    交给 data-calendar.yml / repo-health 告警，避免拖垮读取热路径。
+    """
+    level, msg = calendar_health(cal)
+    if level == "error":
+        raise CalendarExpired(msg)
+
+
 def load_calendar(path: str | None = None, *, root: str | None = None,
                   allow_expired: bool = False) -> TradeCalendar:
     """加载全项目唯一权威交易日历。
