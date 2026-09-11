@@ -57,10 +57,12 @@ def check_partition(path, cal, pd, problems, asset):
     dup = df.duplicated(subset=["code", "date"]).sum()
     if dup:
         problems.append(f"[invariant] {path}: {int(dup)} 个重复 (code,date)")
-    # 日期都在交易日历内（index/stock/etf 都应是交易日）
+    # 日期都在交易日历内（仅校验日历覆盖范围内的日期：指数史可回溯到 1990，
+    # 而种子日历从 2013 起 —— 覆盖范围外的历史日期无法判定，跳过而非误报）
     if cal is not None:
         try:
-            days = pd.to_datetime(df["date"]).dt.date.unique()
+            lo, hi = cal.min_date, cal.max_date
+            days = [d for d in pd.to_datetime(df["date"]).dt.date.unique() if lo <= d <= hi]
             off = [d for d in days if not cal.is_trading_day(d)]
             if off:
                 problems.append(f"[calendar] {path}: {len(off)} 个非交易日日期，示例 {off[:3]}")
