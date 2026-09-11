@@ -1,0 +1,19 @@
+# 构建产物
+index.html
+_shots/
+_backup/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 临时文件
+*.tmp
+*.log

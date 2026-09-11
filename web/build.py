@@ -33,6 +33,26 @@ NAV = [
 
 DOMAINS = [k for k, _, _ in NAV]
 
+# ---------------------------------------------------------------------------
+# 源码根解析：优先读合并后的 domains/<域>（自包含，无需再检出三个老仓），
+# 回退到旧仓目录名（外部检出布局 src/quant-lab 等）。两种布局都能构建。
+# ---------------------------------------------------------------------------
+SRC_ALIASES = {
+    "quant-lab": ("shortterm", "quant-lab"),
+    "red-dividend-strategy": ("etf", "red-dividend-strategy"),
+    "stock-factor-engine": ("selected", "stock-factor-engine"),
+}
+
+
+def _base(src_root: str, legacy: str) -> str:
+    """返回某个域在 src_root 下真实存在的源码目录。"""
+    for cand in SRC_ALIASES[legacy]:
+        p = os.path.join(src_root, cand)
+        if os.path.isdir(p):
+            return p
+    # 都不存在 → 返回首选名，让上层的 open() 抛出可读的错误路径
+    return os.path.join(src_root, SRC_ALIASES[legacy][0])
+
 
 # ---------------------------------------------------------------------------
 # payload 注入：把 `common.payload.adapters` 的统一信封塞进各域模板
@@ -218,7 +238,7 @@ def _extract_from_report_py(path: str) -> str:
 
 def _inline_echarts(root: str) -> str:
     """把 CDN 引用换成内联的本地 echarts（发布时无外网也能用）。"""
-    p = os.path.join(root, "stock-factor-engine/assets/echarts.min.js")
+    p = os.path.join(_base(root, "stock-factor-engine"), "assets/echarts.min.js")
     if not os.path.exists(p):
         return ""
     return f"<script>{_read(p)}</script>"
@@ -240,8 +260,10 @@ def build(src_root: str, out_path: str, *, health: dict | None = None,
           echarts_inline: bool = True, payload_dir: str | None = None) -> str:
     """合成单页壳。
 
-    src_root : 三仓检出根目录（含 quant-lab/ 、red-dividend-strategy/ 、
-               stock-factor-engine/ 三个子目录）
+    src_root : 域源码根目录。两种布局皆可：
+               ① 合并后的 `domains/`（含 shortterm/ etf/ selected/）——自包含，推荐；
+               ② 旧的外部检出根（含 quant-lab/ red-dividend-strategy/
+                  stock-factor-engine/ 三个子目录）。
     health   : 可选的健康状态 {"level": "green|yellow|red", "day": "2026-09-11", ...}
     payload_dir : 可选，`state/payload/` 目录（统一信封入口）。
                   给了就注入真实数据；不给则保留占位符（页面显示空态）。
@@ -251,17 +273,17 @@ def build(src_root: str, out_path: str, *, health: dict | None = None,
     envelopes = load_envelopes(payload_dir) if payload_dir else {}
 
     # ---- 域 1：短线策略（模板内嵌在 build_report.py）----
-    ql = _extract_from_report_py(os.path.join(src_root, "quant-lab/scripts/build_report.py"))
+    ql = _extract_from_report_py(os.path.join(_base(src_root, "quant-lab"), "scripts/build_report.py"))
     ql = inject_payloads(ql, "quant-lab", envelopes)
     frags["quant-lab"] = scope_html_fragment(ql, "quant-lab")
 
     # ---- 域 2：ETF 策略 ----
-    etf = _read(os.path.join(src_root, "red-dividend-strategy/index_template.html"))
+    etf = _read(os.path.join(_base(src_root, "red-dividend-strategy"), "index_template.html"))
     etf = inject_payloads(etf, "etf", envelopes)
     frags["etf"] = scope_html_fragment(etf, "etf")
 
     # ---- 域 3：个性化选股 ----
-    stk = _read(os.path.join(src_root, "stock-factor-engine/templates/index_template.html"))
+    stk = _read(os.path.join(_base(src_root, "stock-factor-engine"), "templates/index_template.html"))
     stk = inject_payloads(stk, "stock", envelopes)
     frags["stock"] = scope_html_fragment(stk, "stock")
 
@@ -339,7 +361,8 @@ def _assemble(*, body: list[str], head_assets: str, health: dict) -> str:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", required=True, help="三仓检出根目录")
+    ap.add_argument("--src", default="domains",
+                    help="域源码根目录：合并后的 domains/（默认，自包含）或旧的外部检出根")
     ap.add_argument("--out", default="web/dist/index.html")
     ap.add_argument("--payload-dir", default=None,
                     help="统一信封目录（state/payload），给了就注入真实数据")

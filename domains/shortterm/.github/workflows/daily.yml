@@ -1,0 +1,101 @@
+name: daily-quant
+
+# 每周一至周五 北京时间 16:30 (= UTC 08:30) 运行; 可在 Actions 页面手动触发
+# 注: GitHub 定时任务尽力而为, 实测延迟 0.5~5h; 第二档 21:00 补跑兜底
+# (流水线幂等: 快照已存在则跳过K线更新, 仅重建报告, 补跑无副作用)
+on:
+  schedule:
+    - cron: '30 8 * * 1-5'
+    - cron: '0 13 * * 1-5'
+  workflow_dispatch:
+
+concurrency:
+  group: daily-quant
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write   # 失败告警自动开 issue 需要
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 单元测试 (核心逻辑回归, 失败即中止; 依赖 run_daily 产物的 8 个测试此时 skip, 产物生成后重跑)
+        run: python -m pytest tests/ -q
+
+      - name: 每日数据更新 (K线快照 + 除权修复)
+        run: python scripts/daily_update.py
+
+      - name: 数据完整性校验 (FAIL 即中止后续回测)
+        run: python scripts/verify_store.py
+
+      - name: 每周一刷新 ST 历史状态 (增量, 失败不阻塞)
+        continue-on-error: true
+        run: |
+          if [ "$(date +%u)" = "1" ]; then
+            for w in 0 1 2 3; do python scripts/backfill_st.py incw $w 4 & done; wait
+            python scripts/backfill_st.py incmerge
+          else
+            echo "非周一, 跳过 ST 刷新"
+          fi
+
+      - name: 信号扫描 + 组合回测 + 生成报告
+        run: python scripts/run_daily.py
+
+      - name: 数据完整性回归 (run_daily 产物已生成, 唤醒此前被 skip 的 8 个测试)
+        run: python -m pytest tests/test_data_integrity.py tests/test_report_payload.py -q
+
+      - name: 数据滚动清理
+        run: python scripts/trim_data.py
+
+      - name: 提交并推送数据
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/kline data/meta/stock_basic.parquet data/meta/index_daily.parquet data/meta/bench_daily.parquet data/meta/st_history.parquet data/meta/lgbm_model.txt data/meta/lgbm_model_meta.json
+          # lgbm_scores.parquet 体积 ~10MB 且每日全文件重写 —— parquet 不可增量追加,
+          # 每天提交会让仓库以 10MB/天 膨胀。策略: 仅每月 1 号刷新基线快照 (10MB/月);
+          # 中间日期的分数由 run_daily 每次内存增量补算 (walk-forward 确定性, 结果可复现)。
+          if [ "$(date -u +%-d)" = "1" ]; then git add data/meta/lgbm_scores.parquet; fi
+          git diff --cached --quiet || git commit -m "data: $(date -u +'%Y-%m-%d')"
+          git push
+
+      # 报告分发已迁移: 花生壳(HSK)托管平台 2026-09-10 起全局禁用已建资源的内容更新
+      # (错误 11301002, 账号/API-Key 通道均 403), 改由本地 WorkBuddy 自动化每日重发布
+      # (report/ 目录, 链接固定); CI 仅负责数据更新 + 测试门禁, 报告产物随 data 提交留档。
+      - name: 仓库体积监控
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SIZE_KB=$(gh api "repos/${{ github.repository }}" --jq '.size')
+          echo "仓库体积: $((SIZE_KB/1024)) MB"
+          if [ "$SIZE_KB" -gt 1048576 ]; then
+            echo "::warning::仓库已超过 1GB —— 数据外置到 GitHub Releases (2GB/文件, 不计仓库体积) 或 filter-repo 瘦身历史"
+          fi
+
+      - name: 失败告警 (已有未关闭告警 issue 则不重复, 防刷屏)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="daily-quant 运行失败"
+          N=$(gh issue list -R "${{ github.repository }}" --state open --search "in:title \"$TITLE\"" --json number --jq 'length')
+          if [ "$N" = "0" ]; then
+            gh issue create -R "${{ github.repository }}" -t "$TITLE" \
+              -b "失败 run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} ($(date -u '+%F %T UTC'))" \
+              -b "定时 run 失败意味着当天报告不会更新 (数据/报告口径以最近一次成功 run 为准); 修复后请关闭本 issue。"
+          else
+            echo "已有未关闭的失败告警 issue, 不重复创建"
+          fi

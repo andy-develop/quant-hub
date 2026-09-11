@@ -1,0 +1,110 @@
+name: 每日数据更新与部署
+
+"on":
+  schedule:
+    - cron: '0 10 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装 Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: 更新股票列表（仅当为空时）
+        run: |
+          if [ ! -s data/stocks.json ] || [ "$(python3 -c "import json; print(len(json.load(open('data/stocks.json'))))")" -lt 100 ]; then
+            echo "股票列表为空或不完整，重新拉取"
+            python3 scripts/fetch_stocks.py
+          else
+            echo "股票列表已存在，跳过拉取"
+          fi
+
+      - name: 增量拉取股价
+        run: python3 scripts/fetch_prices.py --workers 6
+        env:
+          PYTHONUNBUFFERED: 1
+
+      - name: 计算因子
+        run: python3 scripts/compute_factors.py
+
+      - name: 生成 index.html
+        run: python3 scripts/build_html.py
+
+      - name: 验证生成结果
+        run: |
+          ls -lh index.html
+          echo "股票数量: $(python3 -c "import json; print(len(json.load(open('data/stocks.json'))))")"
+          echo "因子数量: $(python3 -c "import json; print(len(json.load(open('data/factors.json'))))")"
+
+      - name: 提交数据回仓库
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/stocks.json data/prices.json data/factors.json
+          if git diff --cached --quiet; then
+            echo "无数据变更，跳过提交"
+          else
+            git commit -m "chore: 每日数据更新 $(date +%Y-%m-%d)"
+            git push
+          fi
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装 hsk-cli
+        run: |
+          npm install -g @aweray/hsk-cli
+          hsk-cli --version
+          hsk-cli update
+
+      - name: 配置 hsk-cli API Key
+        run: |
+          mkdir -p ~/.hsk
+          echo "{\"api_key\":\"${{ secrets.HSK_API_KEY }}\",\"scene\":\"file_hosting\"}" > ~/.hsk/api_key.json
+
+      - name: 推送到文件托管
+        id: deploy
+        run: |
+          hsk-cli +host index.html --entry-file index.html --format json 2>&1 | tee /tmp/hsk_output.json
+          python3 scripts/parse_hsk_output.py /tmp/hsk_output.json >> $GITHUB_OUTPUT
+          cat $GITHUB_OUTPUT
+        env:
+          HSK_API_KEY: ${{ secrets.HSK_API_KEY }}
+
+      - name: 自动认领资源
+        run: |
+          echo "认领资源: ${{ steps.deploy.outputs.RESOURCE_ID }}"
+          hsk-cli file-hosting-bind --resource-id "${{ steps.deploy.outputs.RESOURCE_ID }}" --verify-code "${{ steps.deploy.outputs.VERIFY_CODE }}" 2>&1 || echo "认领失败或已认领"
+
+      - name: 记录部署URL
+        run: |
+          URL="${{ steps.deploy.outputs.PUBLIC_URL }}"
+          echo "# 最新部署地址" > DEPLOY.md
+          echo "" >> DEPLOY.md
+          echo "- 部署时间: $(date -u '+%Y-%m-%d %H:%M UTC')" >> DEPLOY.md
+          echo "- 访问地址: ${URL}" >> DEPLOY.md
+          echo "- Resource ID: ${{ steps.deploy.outputs.RESOURCE_ID }}" >> DEPLOY.md
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add DEPLOY.md
+          git commit -m "chore: 更新部署地址" || echo "无变化"
+          git push || echo "推送失败"

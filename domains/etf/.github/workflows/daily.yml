@@ -1,0 +1,203 @@
+name: Daily Update (08:00 CST)
+
+on:
+  schedule:
+    # 北京时间 08:00 = UTC 00:00（GitHub schedule 用 UTC；负载高时可能延迟数分钟或跳过当天，全量抓取设计不丢数据）
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # v7.12：把抓到的原始输入（data/*.json 存档）与生成产物回写仓库，输入可复核、历史可追溯
+
+concurrency:
+  group: daily-update
+  cancel-in-progress: false
+
+jobs:
+  update-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40   # v7.12：防止 fetch 卡死挂起；v7.14 起行业轮动改为 fetch-only 一次抓取三跑共用
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps (pinned)
+        run: pip install -r requirements.txt
+
+      - name: Run daily update (fetch -> validate -> signal -> build index.html)
+        # v7.12：先 --dry-run 验证两次（同一输入幂等断言），再正式生成
+        # v7.14：新增行业轮动（sector_update.py），同一 job 内先红利低波后行业轮动；
+        #   两脚本各自携带对方 payload 段，顺序不影响最终页面。
+        #   v7.14b：行业轮动先 --fetch-only 抓一次（限流窗口下抓取是长尾），dry×2 + 正式三跑共用同一 raw，
+        #   幂等断言更强（同一输入逐位一致）且抓取量 3×→1×。
+        #   v7.14c：东财对 runner IP 连接级间歇封锁（实测 2 轮重试仅 15/32）——fetch-only 失败时
+        #   自动回退到仓库内最新归档（data/sector-raw-*.json.gz，本地/China IP 抓取），保证每日发布可用。
+        run: |
+          python3 update.py --dry-run --out /tmp/dry-index.html --data-out /tmp/dry-data.json
+          python3 update.py --dry-run --out /tmp/dry-index2.html --data-out /tmp/dry-data2.json
+          cmp /tmp/dry-data.json /tmp/dry-data2.json && echo "红利低波幂等断言通过：同一输入两次生成逐位一致"
+          python3 update.py
+          # v8.0：沪深300 择时（四态仓位机同构，3 参数重标定）——增量机制同红利低波（基线+增量区间）
+          python3 hs300_update.py --dry-run --out /tmp/dry-hs300-index.html --data-out /tmp/dry-hs300-data.json
+          python3 hs300_update.py --dry-run --out /tmp/dry-hs300-index2.html --data-out /tmp/dry-hs300-data2.json
+          cmp /tmp/dry-hs300-data.json /tmp/dry-hs300-data2.json && echo "沪深300幂等断言通过：同一输入两次生成逐位一致"
+          python3 hs300_update.py
+          SECTOR_QUICK=1 python3 sector_update.py --fetch-only /tmp/sector-raw.json || true
+          if [ ! -s /tmp/sector-raw.json ]; then
+            echo "行业轮动抓取失败（东财限流/封锁），重建最近基线（周归档+增量）..."
+            python3 -c "import json, sys; sys.path.insert(0, '.'); import sector_update as S; raw, day, mode = S.rebuild_base(); assert raw is not None, 'rebuild_base 无任何归档'; json.dump(raw, open('/tmp/sector-raw.json','w',encoding='utf-8'), ensure_ascii=False); print('基线', day, 'mode=', mode)" || python3 -c "import sys; sys.path.insert(0, '.'); import sector_update as S; raw, day, mode = S.rebuild_base(); print('FAIL', day, mode); sys.exit(2)"
+            test -s /tmp/sector-raw.json
+          fi
+          python3 sector_update.py --raw /tmp/sector-raw.json --dry-run --out /tmp/dry-sector-index.html --data-out /tmp/dry-sector-data.json
+          python3 sector_update.py --raw /tmp/sector-raw.json --dry-run --out /tmp/dry-sector-index2.html --data-out /tmp/dry-sector-data2.json
+          cmp /tmp/dry-sector-data.json /tmp/dry-sector-data2.json && echo "行业轮动幂等断言通过：同一输入两次生成逐位一致"
+          python3 sector_update.py --raw /tmp/sector-raw.json
+          # v1.1（P0-4）过拟合体检：参数扰动 + walk-forward + 随机对照（固定 seed 42，确定性）
+          python3 sector_sensitivity.py --raw /tmp/sector-raw.json && echo "过拟合体检完成（data/sector-sensitivity.json）"
+
+      - name: Manual trigger guard (P0-1, intraday half-bar)
+        # v1.1：workflow_dispatch 手动触发在盘中运行会抓到半截 bar——sector_update 的 clean_intraday
+        # 已按交易日历剔除未收盘/半截 bar（末日=最近已收盘交易日，data_date 恒为昨日或更早），
+        # 此处仅提示，不阻断（clean 是真正的防线）。
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "::warning::手动触发提示：A股收盘后（北京 15:30 后）运行可获得当日收盘数据；盘中运行将自动清洗半截 bar 并以前一交易日发布。"
+
+      - name: Commit input archive + artifacts (reproducible history)
+        # v7.12：输入原始响应/快照/产物全部入库，出争议可还原"某天页面说了什么、依据了什么数据"
+        run: |
+          git config user.name "daily-update-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/ index.html backtest_data.json sector_data.json hs300_data.json
+          if git diff --cached --quiet; then
+            echo "无新增变更（今天与昨天输入一致？），跳过 commit"
+          else
+            git commit -m "chore(data): archive inputs & artifacts $(date -u +%Y-%m-%d)"
+            git push
+          fi
+
+      - name: Publish to HSK file hosting (overwrite)
+        # v7.12：发布确认——校验 hsk-cli 输出；claimed:false/pending 属正常待确认，重试一次后仍异常则红
+        # v7.16：HSK 资源 403 11301002（update function is disabled）→ 按用户决策自动创建新资源，
+        #   资源 ID/URL 持久化到 data/hsk-resource.json 并提交（后续 run 优先复用；仍尝试 update 旧资源以自动恢复）
+        run: |
+          npm install -g @aweray/hsk-cli >/dev/null 2>&1
+          export PATH="$PATH:$(npm prefix -g)/bin"
+          hsk-cli api-key set --scene file_hosting --key "${{ secrets.HSK_API_KEY }}" >/dev/null 2>&1
+          # 无变化跳过发布：数据截止日期（红利低波 snapshot + 行业轮动 sector）+ 归一化内容指纹
+          # （index.html 剔除 generated_at 后的 sha256，感知模板/导航改动）均与已发布版本一致时跳过。
+          # generated_at 每次构建都变（bj_now）不可作信号；data_date 随交易日变，content_sha 随页面结构变。
+          NEED_PUBLISH=$(python3 - <<'EOF'
+          import json, os, re, hashlib
+          raw = open("index.html", "rb").read()
+          norm = re.sub(rb'"generated_at"\s*:\s*"[^"]*"', b'"generated_at":""', raw)
+          sha = hashlib.sha256(norm).hexdigest()
+          payload = json.loads(re.search(rb'<script id="PAYLOAD" type="application/json">(.*?)</script>', raw, re.S).group(1))
+          dd = f"{payload.get('snapshot', {}).get('data_date')}|{payload.get('sector', {}).get('data_date')}|{payload.get('hs300', {}).get('snapshot', {}).get('data_date')}"
+          print("本次构建 data_date:", dd, "/ content_sha:", sha[:12])
+          skip = False
+          if os.path.exists("data/hsk-resource.json"):
+              old = json.load(open("data/hsk-resource.json", encoding="utf-8"))
+              if old.get("data_date") == dd and old.get("content_sha") == sha:
+                  print(f"数据与页面结构均未变化，跳过发布（复用 {old.get('url')}）")
+                  skip = True
+          print("YES" if skip else "NO")
+          EOF
+          )
+          if [ "$(echo "$NEED_PUBLISH" | tail -1)" = "YES" ]; then exit 0; fi
+          # 复用已持久化的新资源（若存在）
+          RES_ID="${{ secrets.HSK_RESOURCE_ID }}"
+          if [ -f data/hsk-resource.json ]; then
+            RES_ID=$(python3 -c "import json; print(json.load(open('data/hsk-resource.json'))['resource_id'])" 2>/dev/null) || true
+            echo "复用持久化资源: $RES_ID"
+          fi
+          # set -e 陷阱：hsk-cli 403 时退出码非 0，必须 || true 保住后续 fallback
+          out=$(hsk-cli +host index.html --resource-id "$RES_ID" --format json 2>&1) || true; echo "$out"
+          if echo "$out" | grep -q '11301002\|update function is disabled'; then
+            echo "== 资源更新被禁用（403 11301002），创建新资源 =="
+            out=$(hsk-cli host index.html --api-key "${{ secrets.HSK_API_KEY }}" --format json 2>&1) || true; echo "$out"
+          fi
+          # 解析并持久化资源 ID/URL（新资源或成功更新均可）
+          echo "$out" > /tmp/hsk-out.txt || true
+          python3 - <<'EOF'
+          import json, os, re, hashlib
+          out = open("/tmp/hsk-out.txt", encoding="utf-8").read()
+          # 优先取 public_url/publicUrl 字段（勿被输出中的 upload_url 干扰）
+          um = re.search(r'public_?url["\']?\s*[:=]\s*["\'](https?://[^"\']+)', out, re.I)
+          if not um:
+              um = re.search(r'https?://[^\s"\'\\]+', out)
+          rid = re.search(r'resource[_-]?id["\']?\s*[:=]\s*["\']?(\d+)', out, re.I)
+          rec = {}
+          if um: rec["url"] = um.group(1) if um.lastindex else um.group(0).rstrip('",)}')
+          if rid: rec["resource_id"] = rid.group(1)
+          payload = json.loads(re.search(r'<script id="PAYLOAD" type="application/json">(.*?)</script>', open("index.html", encoding="utf-8").read(), re.S).group(1))
+          rec["data_date"] = f"{payload.get('snapshot', {}).get('data_date')}|{payload.get('sector', {}).get('data_date')}|{payload.get('hs300', {}).get('snapshot', {}).get('data_date')}"
+          rec["content_sha"] = hashlib.sha256(re.sub(rb'"generated_at"\s*:\s*"[^"]*"', b'"generated_at":""', open("index.html", "rb").read())).hexdigest()
+          if not rec.get("url") or not rec.get("resource_id"):
+              raise SystemExit(f"无法从 hsk-cli 输出解析资源 URL/ID: {out[:400]}")
+          if os.path.exists("data/hsk-resource.json"):
+              old = json.load(open("data/hsk-resource.json", encoding="utf-8"))
+              if old.get("url") == rec.get("url") and old.get("resource_id") == rec.get("resource_id"):
+                  print(f"资源未变化: {rec.get('url')}")
+                  raise SystemExit(0)
+          os.makedirs("data", exist_ok=True)
+          json.dump(rec, open("data/hsk-resource.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          print(f"持久化资源: {rec}")
+          EOF
+          git add data/hsk-resource.json
+          git -c user.name="github-actions" -c user.email="actions@github.com" commit -m "chore(hsk): persist file-hosting resource [skip ci]" -q && git push -q origin HEAD && echo "资源记录已提交" || echo "资源记录无变化/无需提交"
+        env:
+          HSK_API_KEY: ${{ secrets.HSK_API_KEY }}
+
+      - name: Verify published page is the new build
+        # 发布后验证：线上 PAYLOAD 的数据截止日期（红利低波 snapshot + 行业轮动 sector）
+        # 必须与本次本地产物一致，否则标红（人工可查日志）
+        # v7.16：URL 从 data/hsk-resource.json 读取（新资源），无则回退 945q5w.gicp.fun；
+        #   比对信号用 data_date（generated_at 每次构建都变，不适用）
+        run: |
+          python3 - <<'EOF'
+          import json, os, re, hashlib, urllib.request
+          url = "https://945q5w.gicp.fun"
+          if os.path.exists("data/hsk-resource.json"):
+              rec = json.load(open("data/hsk-resource.json", encoding="utf-8"))
+              url = rec.get("url", url)
+          print(f"线上地址: {url}")
+          norm = lambda b: re.sub(rb'"generated_at"\s*:\s*"[^"]*"', b'"generated_at":""', b)
+          local = json.loads(re.search(r'<script id="PAYLOAD" type="application/json">(.*?)</script>', open("index.html", encoding="utf-8").read(), re.S).group(1))
+          try:
+              with urllib.request.urlopen(url, timeout=30) as r:
+                  html = r.read().decode("utf-8", "ignore")
+              m = re.search(r'<script id="PAYLOAD" type="application/json">(.*?)</script>', html, re.S)
+              online = json.loads(m.group(1)) if m else {}
+              lv, ov = local["snapshot"]["data_date"], online.get("snapshot", {}).get("data_date")
+              ls, os_ = local["sector"]["data_date"], online.get("sector", {}).get("data_date")
+              lh, oh = local["hs300"]["snapshot"]["data_date"], online.get("hs300", {}).get("snapshot", {}).get("data_date")
+              print(f"本地 红利低波 data_date: {lv}")
+              print(f"线上 红利低波 data_date: {ov}")
+              print(f"本地 行业轮动 data_date: {ls}")
+              print(f"线上 行业轮动 data_date: {os_}")
+              print(f"本地 沪深300 data_date: {lh}")
+              print(f"线上 沪深300 data_date: {oh}")
+              if lv != ov or ls != os_ or lh != oh:
+                  raise SystemExit(f"发布验证失败：线上数据未更新（红利低波 {ov}!={lv} / 行业轮动 {os_}!={ls} / 沪深300 {oh}!={lh}）")
+              # v1.1（P1-15）：verify 补内容哈希——data_date 相同但页面结构/数字被篡改也能检出
+              lsha = hashlib.sha256(norm(open("index.html", "rb").read())).hexdigest()
+              osha = hashlib.sha256(norm(html.encode("utf-8"))).hexdigest() if m else ""
+              print(f"本地 content_sha: {lsha[:12]}")
+              print(f"线上 content_sha: {osha[:12]}")
+              if lsha != osha:
+                  raise SystemExit(f"发布验证失败：内容哈希不一致（{osha[:12]}!={lsha[:12]}）")
+              print("发布验证通过：线上已是本次数据（红利低波 + 行业轮动 + 沪深300），内容哈希一致")
+          except Exception as e:
+              raise SystemExit(f"发布验证失败：{e}")
+          EOF
+
+      - name: Notify on failure
+        # v7.12：失败时告警（利用 GitHub 自身的失败状态，输出显式原因便于排查）
+        if: failure()
+        run: echo "::error::Daily update failed — check the logs above. Page may be stale; inputs archived under data/ are intact."

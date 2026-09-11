@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>个性化因子选股 · 智能选股引擎</title>
+<style>
+:root{
+  --bg:#F4F6FB; --card:#FFFFFF; --card-2:#EEF1F8; --line:#E2E6F0;
+  --primary:#2563EB; --primary-light:#EFF4FF; --accent:#D97706;
+  --up:#16A34A; --down:#DC2626;
+  --text:#1A2040; --muted:#5A6480; --muted-2:#8B93A8;
+  --radius:14px; --shadow:0 1px 3px rgba(30,41,80,.06),0 1px 2px rgba(30,41,80,.04);
+  --num:'SF Mono','JetBrains Mono',Menlo,Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--primary);text-decoration:none}
+button{font-family:inherit;cursor:pointer}
+
+/* ===== 左侧导航 ===== */
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:240px;background:var(--card);border-right:1px solid var(--line);z-index:100;display:flex;flex-direction:column;transition:transform .25s ease}
+.sidebar.collapsed{transform:translateX(-100%)}
+.sidebar-logo{padding:20px 20px 16px;border-bottom:1px solid var(--line)}
+.sidebar-logo .brand{font-size:17px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px}
+.sidebar-logo .brand .dot{width:8px;height:8px;border-radius:50%;background:var(--primary)}
+.sidebar-logo .sub{font-size:11px;color:var(--muted-2);margin-top:2px}
+.nav-group{padding:12px 0}
+.nav-group .group-label{font-size:11px;color:var(--muted-2);padding:6px 20px;text-transform:uppercase;letter-spacing:.08em}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;font-size:13.5px;color:var(--muted);cursor:pointer;transition:all .15s;border-left:3px solid transparent}
+.nav-item:hover{background:var(--card-2);color:var(--text)}
+.nav-item.active{background:var(--primary-light);color:var(--primary);border-left-color:var(--primary);font-weight:600}
+.nav-item .ico{width:18px;text-align:center;font-size:15px}
+.sidebar-footer{margin-top:auto;padding:16px 20px;border-top:1px solid var(--line);font-size:11px;color:var(--muted-2)}
+
+/* ===== 汉堡按钮 ===== */
+.hamburger{position:fixed;left:16px;bottom:20px;z-index:101;width:48px;height:48px;border-radius:50%;background:var(--primary);color:#fff;border:none;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(37,99,235,.35);font-size:20px;transition:transform .15s}
+.hamburger:hover{transform:scale(1.05)}
+.hamburger:active{transform:scale(.95)}
+
+/* ===== 主内容 ===== */
+.main{margin-left:240px;min-height:100vh;transition:margin-left .25s ease}
+.main.full{margin-left:0}
+.header{background:var(--card);border-bottom:1px solid var(--line);padding:16px 32px;position:sticky;top:0;z-index:50}
+.header h1{font-size:22px;font-weight:700;display:flex;align-items:center;gap:10px}
+.header h1 .tag{font-size:12px;font-weight:500;background:var(--primary-light);color:var(--primary);padding:3px 10px;border-radius:20px}
+.header .meta{display:flex;gap:24px;margin-top:6px;font-size:12px;color:var(--muted-2);flex-wrap:wrap}
+.header .meta b{color:var(--muted);font-weight:600}
+
+.content{padding:24px 32px 60px;max-width:1400px}
+
+/* ===== 区块 ===== */
+.section{margin-bottom:28px}
+.section-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.section-head .num{width:32px;height:32px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0}
+.section-head h2{font-size:17px;font-weight:700}
+.section-head .desc{font-size:12px;color:var(--muted-2);margin-left:auto}
+
+/* ===== 卡片 ===== */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+
+/* ===== 自选股 ===== */
+.watch-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.watch-header h3{font-size:14px;font-weight:600}
+.watch-header .count{font-size:12px;color:var(--muted-2);font-family:var(--num)}
+.watch-list{min-height:60px}
+.watch-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card-2);margin-bottom:6px}
+.watch-item .nm{font-weight:600;font-size:13px;flex:1}
+.watch-item .st{font-size:11px;color:var(--muted-2)}
+.watch-item .rm{background:none;border:none;color:var(--muted-2);font-size:14px;padding:2px 6px;border-radius:6px;cursor:pointer}
+.watch-item .rm:hover{color:var(--down);background:rgba(220,38,38,.08)}
+.add-btn{width:100%;padding:9px;border:1px dashed var(--line);border-radius:10px;background:transparent;color:var(--muted);font-size:13px;cursor:pointer;transition:all .15s;margin-top:4px}
+.add-btn:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-light)}
+.quick-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.quick-tags .t{font-size:11.5px;padding:4px 10px;border-radius:20px;background:var(--card-2);color:var(--muted);cursor:pointer;transition:all .15s;border:1px solid transparent}
+.quick-tags .t:hover{background:var(--primary-light);color:var(--primary);border-color:rgba(37,99,235,.2)}
+
+/* ===== 雷达图 ===== */
+.radar-wrap{display:flex;flex-direction:column;align-items:center}
+#radarChart{width:100%;height:260px}
+.radar-summary{font-size:13px;color:var(--muted);text-align:center;margin-top:8px;min-height:20px}
+.gen-btn{margin-top:12px;padding:10px 24px;background:var(--primary);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;transition:all .15s}
+.gen-btn:hover{background:#1D4ED8}
+.gen-btn:active{transform:scale(.98)}
+.mini-refresh{width:24px;height:24px;border-radius:50%;background:var(--card-2);border:1px solid var(--line);color:var(--muted);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;line-height:1}
+.mini-refresh:hover{background:var(--primary-light);color:var(--primary);border-color:rgba(37,99,235,.3)}
+.mini-refresh.spinning{animation:spin .5s linear}
+
+/* ===== 推荐列表 ===== */
+.rec-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.rec-header h3{font-size:14px;font-weight:600}
+.refresh-btn{font-size:11.5px;padding:4px 12px;border-radius:20px;background:var(--primary-light);color:var(--primary);border:1px solid rgba(37,99,235,.2);cursor:pointer;transition:all .15s}
+.refresh-btn:hover{background:#DBEAFE}
+.refresh-btn.spinning{animation:spin .6s linear}
+@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+.rec-item{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;transition:all .15s;border:1px solid transparent;margin-bottom:4px}
+.rec-item:hover{background:var(--card-2)}
+.rec-item.sel{background:var(--primary-light);border-color:rgba(37,99,235,.2)}
+.rec-item .rk{width:22px;height:22px;border-radius:50%;background:var(--card-2);color:var(--muted);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;font-family:var(--num)}
+.rec-item:nth-child(1) .rk{background:#FBBF24;color:#78350F}
+.rec-item:nth-child(2) .rk{background:#D1D5DB;color:#374151}
+.rec-item:nth-child(3) .rk{background:#FCD9B6;color:#78350F}
+.rec-item .body{flex:1;min-width:0}
+.rec-item .body .nm{font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+.rec-item .body .nm .sim{font-size:10px;font-weight:500;background:rgba(217,119,6,.1);color:var(--accent);padding:2px 6px;border-radius:10px}
+.rec-item .body .met{font-size:11px;color:var(--muted-2);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rec-item .score{text-align:right;flex-shrink:0}
+.rec-item .score .v{font-size:18px;font-weight:700;color:var(--accent);font-family:var(--num)}
+.rec-item .score .l{font-size:10px;color:var(--muted-2)}
+
+/* ===== 解释卡 ===== */
+.explain-card .name{font-size:16px;font-weight:700;margin-bottom:4px}
+.explain-card .score-line{display:flex;align-items:baseline;gap:8px;margin-bottom:14px}
+.explain-card .score-line .big{font-size:32px;font-weight:700;color:var(--accent);font-family:var(--num)}
+.explain-card .score-line .lb{font-size:12px;color:var(--muted)}
+.explain-card .sec{margin-bottom:12px}
+.explain-card .sec h5{font-size:12px;color:var(--muted-2);margin-bottom:6px;font-weight:600}
+.gene-tags{display:flex;flex-wrap:wrap;gap:6px}
+.gene-tags .g{font-size:12px;padding:4px 10px;border-radius:8px;background:var(--card-2);color:var(--muted)}
+.gene-tags .g.up{background:rgba(22,163,74,.08);color:var(--up)}
+.risk-note{font-size:11px;color:var(--muted-2);margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+
+/* ===== 指标卡片 ===== */
+.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.metric{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.metric .label{font-size:11.5px;color:var(--muted-2);margin-bottom:4px}
+.metric .value{font-size:22px;font-weight:700;font-family:var(--num)}
+.metric .value.up{color:var(--up)}
+.metric .value.down{color:var(--down)}
+.metric .sub{font-size:11px;color:var(--muted-2);margin-top:2px}
+
+/* ===== 表格 ===== */
+.data-table{width:100%;border-collapse:collapse;font-size:13px}
+.data-table th{text-align:left;padding:10px 12px;font-size:12px;color:var(--muted-2);font-weight:600;border-bottom:1px solid var(--line);background:var(--card-2);white-space:nowrap}
+.data-table td{padding:10px 12px;border-bottom:1px solid var(--line);font-family:var(--num)}
+.data-table tr:hover td{background:var(--card-2)}
+.data-table .hold{background:rgba(217,119,6,.05)}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500}
+.badge.candidate{background:rgba(37,99,235,.1);color:var(--primary)}
+.badge.watch{background:rgba(217,119,6,.1);color:var(--accent)}
+.badge.neutral{background:var(--card-2);color:var(--muted-2)}
+
+/* ===== 弹窗 ===== */
+.modal-overlay{position:fixed;inset:0;background:rgba(30,41,80,.4);z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-overlay.show{display:flex}
+.modal{background:var(--card);border-radius:16px;padding:24px;max-width:520px;width:100%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(30,41,80,.2)}
+.modal h3{font-size:17px;margin-bottom:14px}
+.search-box{display:flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;margin-bottom:12px}
+.search-box input{flex:1;border:none;outline:none;font-size:14px;background:transparent;color:var(--text)}
+.search-results{max-height:300px;overflow-y:auto;margin-bottom:8px}
+.search-item{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;transition:background .1s}
+.search-item:hover{background:var(--card-2)}
+.search-item.disabled{opacity:.4;cursor:not-allowed}
+.search-item .code{font-family:var(--num);font-size:12px;color:var(--muted-2);width:56px}
+.search-item .info{flex:1}
+.search-item .info .nm{font-size:13.5px;font-weight:600}
+.search-item .info .st{font-size:11px;color:var(--muted-2)}
+.search-item .badge-add{font-size:11px;padding:3px 10px;border-radius:8px;background:var(--primary-light);color:var(--primary)}
+.search-empty{text-align:center;padding:30px;color:var(--muted-2);font-size:13px}
+.search-hint{font-size:11px;color:var(--muted-2);padding-top:8px;border-top:1px solid var(--line)}
+
+/* ===== Toast ===== */
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-20px);background:var(--text);color:#fff;padding:10px 20px;border-radius:10px;font-size:13px;z-index:300;opacity:0;transition:all .25s;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.2)}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ===== 视图切换 ===== */
+.view{display:none}
+.view.active{display:block}
+
+/* ===== 因子筛选 ===== */
+.factor-filters{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.factor-filters .f{font-size:12px;padding:5px 12px;border-radius:20px;background:var(--card);border:1px solid var(--line);color:var(--muted);cursor:pointer;transition:all .15s}
+.factor-filters .f.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+
+/* ===== 响应式 ===== */
+@media(max-width:1024px){
+  .grid-3{grid-template-columns:1fr}
+  .metric-grid{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:768px){
+  .sidebar{transform:translateX(-100%)}
+  .sidebar.show{transform:translateX(0)}
+  .main{margin-left:0}
+  .content{padding:16px}
+  .header{padding:14px 16px}
+  .grid-2{grid-template-columns:1fr}
+}
+</style>
+<script src="assets/echarts.min.js"></script>
+<script>if(typeof echarts==='undefined'){document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"><\/script>')}</script>
+</head>
+<body>
+
+<!-- 左侧导航 -->
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <div class="brand"><span class="dot"></span>个性化因子选股</div>
+    <div class="sub">AI 智能选股引擎 · v1.0</div>
+  </div>
+  <div class="nav-group">
+    <div class="group-label">核心功能</div>
+    <div class="nav-item active" data-view="home"><span class="ico">◎</span>选股主页</div>
+    <div class="nav-item" data-view="factors"><span class="ico">▤</span>因子库</div>
+    <div class="nav-item" data-view="backtest"><span class="ico">↗</span>回测验证</div>
+  </div>
+  <div class="nav-group">
+    <div class="group-label">关于</div>
+    <div class="nav-item" data-view="about"><span class="ico">ⓘ</span>方案说明</div>
+  </div>
+  <div class="sidebar-footer">
+    数据日期 2026-09-10<br>覆盖全 A 股 5180 只<br>不构成投资建议
+  </div>
+</nav>
+
+<!-- 汉堡按钮 -->
+<button class="hamburger" id="hamburger" title="导航">☰</button>
+
+<!-- 主内容 -->
+<div class="main" id="main">
+  <div class="header">
+    <h1>个性化因子选股 <span class="tag" id="headerTag">智能选股引擎</span></h1>
+    <div class="meta">
+      <span><b>数据日期</b> /*__DATA_DATE__*/</span>
+      <span><b>生成时间</b> <span id="genTime">/*__GEN_TIME__*/</span></span>
+      <span><b>覆盖</b> 全 A 股 5180 只</span>
+      <span><b>策略版本</b> v1.0</span>
+      <span><b>实现依据</b> 《AI选股——个性化因子选股》</span>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ===== 视图：选股主页 ===== -->
+    <div class="view active" id="view-home">
+
+      <!-- 区块①：自选股 + 画像 + 推荐 -->
+      <div class="section">
+        <div class="section-head">
+          <div class="num">1</div>
+          <h2>自选股画像 · 相似增强推荐</h2>
+          <span class="desc">输入自选股 → 生成 7 维因子画像 → 从全市场匹配相似增强股</span>
+        </div>
+        <div class="grid-3">
+          <!-- 自选股 -->
+          <div class="card">
+            <div class="watch-header">
+              <h3>我的自选股</h3>
+              <span class="count" id="watchCount">0 只</span>
+            </div>
+            <div class="watch-list" id="watchList"></div>
+            <button class="add-btn" id="addStockBtn">+ 添加自选股</button>
+            <div class="quick-tags" id="quickTags"></div>
+          </div>
+          <!-- 雷达画像 -->
+          <div class="card radar-wrap">
+            <div class="watch-header" style="width:100%">
+              <h3>基因画像</h3>
+              <span style="display:flex;align-items:center;gap:8px">
+                <button class="mini-refresh" id="radarRefresh" title="刷新画像">↻</button>
+                <span class="count">实时联动</span>
+              </span>
+            </div>
+            <div id="radarChart"></div>
+            <div class="radar-summary" id="radarSummary"></div>
+          </div>
+          <!-- 推荐 -->
+          <div class="card">
+            <div class="rec-header">
+              <h3>相似增强推荐</h3>
+              <button class="refresh-btn" id="recRefreshBtn">↻ 换一批</button>
+            </div>
+            <div id="recList"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 区块②：推荐解释 -->
+      <div class="section">
+        <div class="section-head">
+          <div class="num">2</div>
+          <h2>推荐解释</h2>
+          <span class="desc">点击上方推荐股查看详细因子对比</span>
+        </div>
+        <div class="card explain-card" id="explainCard">
+          <div class="name" id="explainName">—</div>
+          <div class="score-line"><span class="big" id="explainScore">—</span><span class="lb" id="explainSim">综合评分</span></div>
+          <div class="sec"><h5>共同基因（Top 3）</h5><div class="gene-tags" id="explainCommon">—</div></div>
+          <div class="sec"><h5>增强点（比你更强）</h5><div class="gene-tags" id="explainEnh">—</div></div>
+          <div class="risk-note"><b>风险提示：</b>因子评分不预示未来收益；以上为公开数据因子分析，不构成投资建议。</div>
+        </div>
+      </div>
+
+      <!-- 区块③：回测概览 -->
+      <div class="section">
+        <div class="section-head">
+          <div class="num">3</div>
+          <h2>回测概览 · 2021-09 至今</h2>
+          <span class="desc">推荐组合 vs 自选股组合 vs 沪深300</span>
+        </div>
+        <div class="metric-grid">
+          <div class="metric"><div class="label">推荐组合 · 年化收益</div><div class="value up">+17.6%</div><div class="sub">最大回撤 -22.4%</div></div>
+          <div class="metric"><div class="label">推荐组合 · 夏普比率</div><div class="value">1.23</div><div class="sub">Calmar 0.79</div></div>
+          <div class="metric"><div class="label">自选股组合 · 年化收益</div><div class="value up">+11.8%</div><div class="sub">最大回撤 -27.5%</div></div>
+          <div class="metric"><div class="label">沪深300 · 年化收益</div><div class="value up">+8.0%</div><div class="sub">最大回撤 -25.1%</div></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ===== 视图：因子库 ===== -->
+    <div class="view" id="view-factors">
+      <div class="section">
+        <div class="section-head">
+          <div class="num">①</div>
+          <h2>36 因子库</h2>
+          <span class="desc">7 大维度 · 首期开放 18 因子 · 后续逐步开放</span>
+        </div>
+        <div class="factor-filters" id="factorFilters"></div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <table class="data-table" id="factorTable">
+            <thead><tr><th>维度</th><th>因子名称</th><th>代码</th><th>解释</th><th>方向</th><th>更新频率</th><th>IC</th><th>ICIR</th><th>状态</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 视图：回测验证 ===== -->
+    <div class="view" id="view-backtest">
+      <div class="section">
+        <div class="section-head">
+          <div class="num">①</div>
+          <h2>回测验证 · 2021-09 至 2026-08</h2>
+          <span class="desc">月频调仓 · 双边成本 12bp · 初始资金 100 万</span>
+        </div>
+        <div class="metric-grid" style="margin-bottom:16px">
+          <div class="metric"><div class="label">推荐组合 · 总收益</div><div class="value up">+128.8%</div><div class="sub">年化 +17.6%</div></div>
+          <div class="metric"><div class="label">推荐组合 · 最大回撤</div><div class="value down">-22.4%</div><div class="sub">夏普 1.23</div></div>
+          <div class="metric"><div class="label">自选股组合 · 总收益</div><div class="value up">+76.2%</div><div class="sub">年化 +11.8%</div></div>
+          <div class="metric"><div class="label">超额收益（vs HS300）</div><div class="value up">+9.6%</div><div class="sub">年化超额</div></div>
+        </div>
+        <div class="card">
+          <h3 style="font-size:14px;margin-bottom:12px">净值曲线</h3>
+          <div id="btChart" style="width:100%;height:360px"></div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-head">
+          <div class="num">②</div>
+          <h2>分年收益</h2>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <table class="data-table" id="yearTable">
+            <thead><tr><th>年份</th><th>推荐组合</th><th>自选股组合</th><th>沪深300</th><th>超额（vs HS300）</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 视图：关于 ===== -->
+    <div class="view" id="view-about">
+      <div class="section">
+        <div class="section-head"><div class="num">①</div><h2>方案概述</h2></div>
+        <div class="card" style="font-size:14px;line-height:1.8;color:var(--muted)">
+          <p style="margin-bottom:12px"><b style="color:var(--text)">个性化因子选股</b>是一款基于多因子模型的 AI 选股工具。核心思路：从用户自选股中提取 7 维因子画像（估值、质量、成长、动量、波动、资金、机构），再从全市场 5180 只 A 股中匹配因子暴露相似且具有增强潜力的标的。</p>
+          <p style="margin-bottom:12px"><b style="color:var(--text)">算法流程：</b>自选股因子暴露均值 → 用户画像向量 U → 全市场余弦相似度排序 → 增强分（候选强于用户的维度）→ 综合评分 = 相似度^0.7 × (1 + 0.3×增强分) → Top 5 推荐。</p>
+          <p><b style="color:var(--text)">数据说明：</b>本页面所有因子暴露与行情数据为演示数据，由股票代码确定性生成，不代表真实值。回测序列锚定方案指标（推荐年化 17.6% / 夏普 1.23）。本产品仅供策略验证与原型演示，不构成投资建议。</p>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-head"><div class="num">②</div><h2>技术参数</h2></div>
+        <div class="grid-2">
+          <div class="card">
+            <h3 style="font-size:14px;margin-bottom:10px">算法参数</h3>
+            <table class="data-table">
+              <tr><td>相似度权重 α</td><td style="font-family:var(--num)">0.7</td></tr>
+              <tr><td>增强分权重 λ</td><td style="font-family:var(--num)">0.3</td></tr>
+              <tr><td>综合评分公式</td><td style="font-family:var(--num);font-size:12px">sim^0.7 × (1+0.3×enh)</td></tr>
+              <tr><td>推荐数量</td><td style="font-family:var(--num)">Top 5（从 Top30 扰动选取）</td></tr>
+              <tr><td>自选股上限</td><td style="font-family:var(--num)">10 只</td></tr>
+            </table>
+          </div>
+          <div class="card">
+            <h3 style="font-size:14px;margin-bottom:10px">数据覆盖</h3>
+            <table class="data-table">
+              <tr><td>股票池</td><td style="font-family:var(--num)">全 A 股 5180 只</td></tr>
+              <tr><td>因子维度</td><td style="font-family:var(--num)">7 大维度 / 36 因子</td></tr>
+              <tr><td>回测区间</td><td style="font-family:var(--num)">2021-09 ~ 2026-08（60月）</td></tr>
+              <tr><td>调仓频率</td><td style="font-family:var(--num)">月频</td></tr>
+              <tr><td>交易成本</td><td style="font-family:var(--num)">双边 12bp</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 搜索弹窗 -->
+<div class="modal-overlay" id="searchModal">
+  <div class="modal">
+    <h3>添加自选股</h3>
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--muted-2)"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="stockSearchInput" type="text" placeholder="输入代码或名称，如 600519 / 茅台 / 银行" autocomplete="off">
+    </div>
+    <div class="search-results" id="stockSearchResults"></div>
+    <div class="search-hint">覆盖全 A 股 5180 只，支持 6 位代码和名称模糊匹配；已在自选股中的不可重复添加。因子暴露为演示数据。</div>
+  </div>
+</div>
+
+<!-- 推荐详情弹窗 -->
+<div class="modal-overlay" id="recModal">
+  <div class="modal" id="recModalContent"></div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+
+<script>
+/* ================================================================
+   个性化因子选股 · 内部路演 — 数据层（演示数据 + 真实逻辑）
+   ================================================================ */
+"use strict";
+
+/* ---- 7 大雷达维度 ---- */
+var DIMS = ["估值","质量","成长","动量","波动","资金","机构"];
+
+/* ---- 默认自选股（5 只，向量已校准，均值=方案雷达目标 [72,85,68,79,55,61,73]） ---- */
+var WATCH_DEFAULT = [
+  {name:"贵州茅台", style:"高质量 · 高护城河", vec:[65,98,58,78,58,62,88]},
+  {name:"宁德时代", style:"高成长 · 强动量",   vec:[58,74,92,100,40,68,70]},
+  {name:"招商银行", style:"低估值 · 高股息",   vec:[96,84,40,64,80,55,67]},
+  {name:"立讯精密", style:"成长 · 机构抱团",   vec:[68,75,82,88,50,66,78]},
+  {name:"恒瑞医药", style:"质量 · 研发",       vec:[73,94,68,65,47,54,62]}
+];
+
+/* ---- 确定性 PRNG（mulberry32）：从股票代码生成可复现的因子暴露与风格标签 ---- */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function codeSeed(code){ return parseInt(code,10) || 1; }
+function genVec(code){
+  var rng = mulberry32(codeSeed(code));
+  var v = [0,0,0,0,0,0,0].map(function(){ return Math.round(28 + rng()*62); });
+  // 若有真实因子数据，覆盖动量(索引3)和波动(索引4)维度
+  var rf = REAL_FACTORS[code];
+  if(rf){
+    if(typeof rf.mom_20 === "number") v[3] = Math.round(Math.max(5, Math.min(98, 50 + rf.mom_20 * 160)));
+    if(typeof rf.vol_20 === "number") v[4] = Math.round(Math.max(5, Math.min(98, 95 - rf.vol_20 * 120)));
+  }
+  return v;
+}
+var STYLE_POOL = ["成长 · 动量","质量 · 稳健","价值 · 股息","周期 · 龙头","科技 · 成长","消费 · 品牌","金融 · 低估值","制造 · 细分龙头","医药 · 研发","新能源 · 景气","资源 · 周期","公用 · 稳健"];
+function genStyle(code){
+  var rng = mulberry32(codeSeed(code)*7+13);
+  return STYLE_POOL[Math.floor(rng()*STYLE_POOL.length)];
+}
+
+/* ---- 13 只核心股票人工校准（保证默认自选股画像 = 方案雷达目标） ---- */
+var STOCK_CAL = {
+  "600519":{style:"高质量 · 高护城河",vec:[65,98,58,78,58,62,88]},
+  "300750":{style:"高成长 · 强动量",vec:[58,74,92,100,40,68,70]},
+  "600036":{style:"低估值 · 高股息",vec:[96,84,40,64,80,55,67]},
+  "002475":{style:"成长 · 机构抱团",vec:[68,75,82,88,50,66,78]},
+  "600276":{style:"质量 · 研发",vec:[73,94,68,65,47,54,62]},
+  "601318":{style:"低估值 · 金融",vec:[90,80,45,58,78,52,65]},
+  "000333":{style:"质量 · 股息",vec:[78,86,52,62,70,58,72]},
+  "002594":{style:"成长 · 动量",vec:[55,70,90,88,42,66,68]},
+  "688981":{style:"成长 · 高波动",vec:[50,68,85,80,38,64,60]},
+  "603259":{style:"研发 · 质量",vec:[62,90,78,66,48,58,70]},
+  "300059":{style:"资金 · 动量",vec:[70,72,75,78,50,80,66]},
+  "601899":{style:"资源 · 动量",vec:[72,74,60,72,48,60,58]},
+  "000858":{style:"消费 · 质量",vec:[76,88,58,64,62,56,74]}
+};
+
+/* ---- 热门添加标签（从全市场精选） ---- */
+var QUICK_ADDS = ["601318","000333","002594","688981","603259","300059"];
+
+/* ---- [code,name] → 完整股票对象 ---- */
+function resolveStock(entry){
+  var code = entry[0], name = entry[1];
+  var cal = STOCK_CAL[code];
+  return {code:code, name:name, style:cal?cal.style:genStyle(code), vec:cal?cal.vec.slice():genVec(code)};
+}
+function findStock(code){
+  for(var i=0;i<STOCK_UNIVERSE.length;i++){ if(STOCK_UNIVERSE[i][0]===code) return resolveStock(STOCK_UNIVERSE[i]); }
+  return null;
+}
+
+/* ---- 全 A 股股票池（5180 只，支持代码 / 名称模糊搜索添加） ---- */
+/* 真实因子数据（每日由 GitHub Actions 计算注入） */
+var REAL_FACTORS = /*__REAL_FACTORS__*/{};
+var STOCK_UNIVERSE = /*__STOCK_UNIVERSE__*/[];
+/* ---- 相似增强推荐（5 只演示股） ---- */
+var REC_STOCKS = [
+  {name:"恒芯科技", style:"成长 · 动量 · 机构", vec:[60,76,95,96,42,72,80]},
+  {name:"拓维智能", style:"质量 · 动量 · 机构", vec:[70,88,80,84,50,66,85]},
+  {name:"星驰电子", style:"成长 · 动量",        vec:[62,78,90,92,44,70,76]},
+  {name:"骏丰制造", style:"估值 · 质量",        vec:[80,82,60,68,60,58,70]},
+  {name:"康源生物", style:"质量 · 研发",        vec:[68,92,72,66,52,60,74]}
+];
+
+/* ---- 36 因子库：[维度, 好记名, 代码, 一句话解释, 方向, 更新频率, 温度, IC, ICIR, 是否首期, 适用风格] ---- */
+var FACTORS = [
+  ["估值","捡漏雷达","VAL_CHEAP","相对同行更便宜，安全边际更厚。","低估值","季度","中性",0.060,0.52,true,"价值、高股息"],
+  ["估值","现金回报率","VAL_FCF","自由现金流收益率高，真金白银质量好。","高","季度","中性",0.045,0.38,true,"价值、质量"],
+  ["估值","股息保护垫","VAL_DIV","高股息提供下行保护与分红回报。","高","季度","偏冷",0.035,0.31,true,"红利、低波"],
+  ["估值","破净反转","VAL_PB_REV","深度破净后存在均值回归机会。","低","月度","偏热",0.028,0.22,false,"反转、价值"],
+  ["质量","印钞机","QUAL_ROE","高 ROE，赚钱效率与资本回报突出。","高","季度","偏热",0.070,0.55,true,"质量、机构抱团"],
+  ["质量","现金奶牛","QUAL_CFO","经营现金流充沛，利润含金量高。","高","季度","中性",0.050,0.42,true,"质量、消费"],
+  ["质量","护城河","QUAL_GM","高毛利，定价权与议价能力强。","高","季度","中性",0.042,0.36,true,"质量、白马"],
+  ["质量","财务清白","QUAL_BAL","负债低、商誉轻，财务结构干净。","低负债","季度","中性",0.038,0.33,false,"质量、防御"],
+  ["成长","业绩加速器","GROW_ACC","利润增速边际加快，景气向上。","高","季度","偏热",0.055,0.45,true,"成长、景气"],
+  ["成长","营收发动机","GROW_REV","营收持续高增，规模扩张快。","高","季度","中性",0.048,0.40,false,"成长、白马"],
+  ["成长","盈利上修潮","GROW_REVISION","分析师近期密集上调盈利预测。","高","月度","偏热",0.050,0.42,true,"成长、机构抱团"],
+  ["成长","订单蓄水池","GROW_ORDER","合同负债 / 预收款领先未来收入。","高","季度","中性",0.032,0.28,false,"成长、制造"],
+  ["动量","趋势飞轮","MOM_TREND","沿中期均线持续上行，趋势强劲。","高","日度","偏热",0.060,0.50,true,"趋势、动量"],
+  ["动量","强者恒强","MOM_52W","贴近 52 周新高，资金认可度高。","高","日度","中性",0.044,0.37,false,"动量、强势股"],
+  ["动量","回踩确认","MOM_PULLBACK","上升趋势中回踩支撑不破，买点健康。","高","日度","中性",0.030,0.26,false,"趋势、波段"],
+  ["动量","相对强度","MOM_RS","持续跑赢市场与行业基准。","高","周度","中性",0.052,0.44,true,"动量、行业龙头"],
+  ["波动","低波气囊","RISK_LOWVOL","波动低、回撤小，持仓体验平稳。","低","日度","中性",0.040,0.35,true,"低波、防御"],
+  ["波动","回撤修复力","RISK_RECOVER","回撤后能快速修复净值。","高","日度","中性",0.026,0.22,false,"低波、质量"],
+  ["波动","夜间安稳","RISK_GAP","跳空缺口少，隔夜风险可控。","低","日度","偏冷",0.024,0.20,false,"低波、防御"],
+  ["波动","高夏普基因","RISK_SHARP","单位风险获得的回报更高。","高","月度","中性",0.036,0.32,false,"稳健、全天候"],
+  ["资金","聪明钱雷达","FLOW_SMART","主力资金持续净流入，关注度高。","高","日度","偏热",0.058,0.47,true,"资金、题材"],
+  ["资金","龙虎榜机构","FLOW_LHB","龙虎榜机构席位净买入放量。","高","事件","偏热",0.042,0.34,false,"事件、游资"],
+  ["资金","融资升温","FLOW_MARGIN","融资余额上升，杠杆资金进场。","高","日度","中性",0.030,0.25,false,"资金、强势股"],
+  ["资金","股东增持灯","FLOW_INSIDER","高管 / 大股东真金白银增持。","高","事件","偏冷",0.027,0.23,false,"事件、价值"],
+  ["机构","机构抱团度","INST_HOLD","机构持仓占比高且集中。","高","季度","偏热",0.049,0.40,true,"机构、白马"],
+  ["机构","调研热度","INST_VISIT","机构调研频繁，关注度升温。","高","月度","中性",0.038,0.33,true,"机构、成长"],
+  ["机构","券商金股共振","INST_BROKER","多家券商金股重叠，预期一致。","高","月度","偏热",0.034,0.29,false,"机构、共识"],
+  ["机构","筹码集中度","INST_CHIP","股东户数下降，筹码趋于集中。","高","季度","中性",0.031,0.27,false,"机构、控盘"],
+  ["事件","盈利惊喜","EVT_EARN_SURP","业绩超预期，财报季的确定性催化。","高","季度","偏热",0.062,0.51,true,"事件、景气"],
+  ["事件","回购信号灯","EVT_BUYBACK","大额回购注销，传递低估信号。","高","事件","中性",0.036,0.30,false,"事件、价值"],
+  ["事件","政策顺风","EVT_POLICY","处于政策重点支持方向。","高","月度","中性",0.028,0.24,false,"政策、主题"],
+  ["事件","新品爆发","EVT_NEW","新品 / 新业务放量带来增量。","高","事件","中性",0.033,0.28,false,"事件、成长"],
+  ["另类","舆情温度","ALT_SENTI","全网舆情热度与情绪倾向。","高","日度","中性",0.025,0.21,false,"主题、短线"],
+  ["另类","专利密度","ALT_PATENT","专利数量与质量密度领先。","高","季度","偏冷",0.022,0.18,false,"科技、成长"],
+  ["另类","治理优质","ALT_GOV","公司治理规范，股东回报意识强。","高","年度","偏冷",0.020,0.17,false,"质量、长线"],
+  ["另类","绿色加分","ALT_ESG","ESG 评级高，机构配置偏好改善。","高","年度","中性",0.019,0.16,false,"ESG、长线"]
+];
+
+/* ---- 9 大维度数据源（code → 免费源） ---- */
+var SOURCE_BY_DIM = {
+  "估值":[
+    ["捡漏雷达","VAL_CHEAP","Tushare daily_basic、AkShare、东方财富、新浪财经"],
+    ["现金回报率","VAL_FCF","Tushare cashflow、AkShare、巨潮资讯、东方财富"],
+    ["股息保护垫","VAL_DIV","Tushare dividend、AkShare、巨潮资讯、东方财富"],
+    ["破净反转","VAL_PB_REV","Tushare、AkShare、东方财富、新浪财经"]
+  ],
+  "质量":[
+    ["印钞机","QUAL_ROE","Tushare fina_indicator、AkShare、巨潮资讯、Baostock"],
+    ["现金奶牛","QUAL_CFO","Tushare cashflow、Tushare income、AkShare、巨潮资讯"],
+    ["护城河","QUAL_GM","Tushare fina_indicator、AkShare、巨潮资讯"],
+    ["财务清白","QUAL_BAL","Tushare balancesheet、巨潮资讯、交易所、东方财富"]
+  ],
+  "成长":[
+    ["业绩加速器","GROW_ACC","Tushare income、Tushare fina_indicator、AkShare、巨潮资讯"],
+    ["营收发动机","GROW_REV","Tushare income、AkShare、巨潮资讯"],
+    ["盈利上修潮","GROW_REVISION","东方财富研报、新浪财经研报、券商官网、慧博免费页；需自建历史快照"],
+    ["订单蓄水池","GROW_ORDER","Tushare balancesheet、AkShare、巨潮资讯"]
+  ],
+  "动量":[
+    ["趋势飞轮","MOM_TREND","AkShare、Baostock、Tushare、新浪财经、腾讯财经"],
+    ["强者恒强","MOM_52W","AkShare、Baostock、Tushare、新浪财经、腾讯财经"],
+    ["回踩确认","MOM_PULLBACK","AkShare、Baostock、Tushare、新浪财经、腾讯财经"],
+    ["相对强度","MOM_RS","AkShare、Tushare index_daily、中证指数、国证指数、交易所"]
+  ],
+  "波动":[
+    ["低波气囊","RISK_LOWVOL","AkShare、Baostock、Tushare、新浪财经、腾讯财经"],
+    ["回撤修复力","RISK_RECOVER","AkShare、Baostock、Tushare、新浪财经、腾讯财经"],
+    ["夜间安稳","RISK_GAP","AkShare、Baostock、Tushare、新浪财经、腾讯财经"],
+    ["高夏普基因","RISK_SHARP","AkShare、Baostock、Tushare、中债、中国货币网"]
+  ],
+  "资金":[
+    ["聪明钱雷达","FLOW_SMART","东方财富、同花顺、新浪财经、AkShare、Tushare moneyflow"],
+    ["龙虎榜机构","FLOW_LHB","交易所官网、东方财富、AkShare、Tushare top_list/top_inst"],
+    ["融资升温","FLOW_MARGIN","交易所官网、东方财富、AkShare、Tushare margin_detail"],
+    ["股东增持灯","FLOW_INSIDER","巨潮资讯、交易所、东方财富、AkShare、Tushare"]
+  ],
+  "机构":[
+    ["机构抱团度","INST_HOLD","巨潮资讯、基金公司官网、交易所、东方财富、AkShare、Tushare fund_portfolio/top10_floatholders"],
+    ["调研热度","INST_VISIT","巨潮资讯、互动易、上证e互动、东方财富、AkShare"],
+    ["券商金股共振","INST_BROKER","券商官网、东方财富研报、新浪财经研报、慧博免费页"],
+    ["筹码集中度","INST_CHIP","交易所、巨潮资讯、东方财富、AkShare、Tushare stk_holdernumber"]
+  ],
+  "事件":[
+    ["盈利惊喜","EVT_EARN_SURP","巨潮资讯、交易所、Tushare forecast/express、AkShare、东方财富"],
+    ["回购信号灯","EVT_BUYBACK","巨潮资讯、交易所、东方财富、AkShare"],
+    ["政策顺风","EVT_POLICY","国务院、发改委、工信部、地方政府、证监会"],
+    ["新品爆发","EVT_NEW","巨潮资讯、交易所、公司官网、东方财富"]
+  ],
+  "另类":[
+    ["舆情温度","ALT_SENTI","东方财富、新浪财经、雪球、股吧、微博、新闻网站"],
+    ["专利密度","ALT_PATENT","国家知识产权局、Google Patents、佰腾、智慧芽免费检索"],
+    ["治理优质","ALT_GOV","证监会、交易所、企查查/天眼查免费页、巨潮资讯"],
+    ["绿色加分","ALT_ESG","中证指数、华证ESG公开页、交易所、证监会"]
+  ]
+};
+
+/* ---- 首期 15 核心因子最小数据源组合 ---- */
+var CORE_SOURCES = [
+  ["捡漏雷达","Tushare daily_basic、AkShare、东方财富"],
+  ["现金回报率","Tushare cashflow、AkShare、巨潮资讯"],
+  ["股息保护垫","Tushare dividend、巨潮资讯、东方财富"],
+  ["印钞机","Tushare fina_indicator、AkShare、巨潮资讯"],
+  ["现金奶牛","Tushare cashflow、Tushare income、AkShare"],
+  ["护城河","Tushare fina_indicator、AkShare、巨潮资讯"],
+  ["业绩加速器","Tushare income、Tushare fina_indicator、巨潮资讯"],
+  ["盈利上修潮","东方财富研报、新浪财经研报、券商官网，自建历史快照"],
+  ["趋势飞轮","Tushare daily + adj_factor、AkShare、Baostock"],
+  ["相对强度","Tushare index_daily、中证指数、AkShare"],
+  ["低波气囊","Tushare daily、AkShare、Baostock"],
+  ["聪明钱雷达","东方财富、AkShare、Tushare moneyflow"],
+  ["机构抱团度","Tushare fund_portfolio、巨潮资讯、东方财富"],
+  ["调研热度","巨潮资讯、互动易、上证e互动、AkShare"],
+  ["盈利惊喜","巨潮资讯、Tushare forecast/express、AkShare"]
+];
+
+/* ---- 免费数据的坑 ---- */
+var PITFALLS = [
+  ["免费≠可商用","多数网站禁止爬虫、转售、商用"],
+  ["Tushare 积分制","部分接口需要积分，积分获取有条件"],
+  ["分析师预期","免费历史快照少，必须自己每日抓取积累"],
+  ["北向资金","披露规则变化，免费实时数据受限"],
+  ["复权","动量、波动、回撤必须用复权价"],
+  ["未来函数","财务数据必须按公告日入库，不能按报告期"],
+  ["退市股","回测必须包含退市股，否则幸存者偏差"],
+  ["行业分类","申万行业会调整，要保存历史分类"],
+  ["反爬","东方财富、雪球、股吧等有频率限制和反爬"],
+  ["版权","研报、新闻、专利免费检索不等于可分发"]
+];
+
+/* ---- 回测模拟序列（2021-09 ~ 2026-08，锚定方案指标：推荐18%/-22%/1.2，自选12%/-28%/0.8，沪深300 8%/-25%/0.5） ---- */
+var BT_MONTHS = ["2021-09","2021-10","2021-11","2021-12","2022-01","2022-02","2022-03","2022-04","2022-05","2022-06","2022-07","2022-08","2022-09","2022-10","2022-11","2022-12","2023-01","2023-02","2023-03","2023-04","2023-05","2023-06","2023-07","2023-08","2023-09","2023-10","2023-11","2023-12","2024-01","2024-02","2024-03","2024-04","2024-05","2024-06","2024-07","2024-08","2024-09","2024-10","2024-11","2024-12","2025-01","2025-02","2025-03","2025-04","2025-05","2025-06","2025-07","2025-08","2025-09","2025-10","2025-11","2025-12","2026-01","2026-02","2026-03","2026-04","2026-05","2026-06","2026-07","2026-08"];
+var BT_REC   = [1.0,1.014993,1.060574,1.141199,1.128082,1.021772,1.044508,1.062318,1.039238,1.076862,1.135517,1.14662,1.088426,1.091077,1.177115,1.154622,1.220847,1.275095,1.24153,1.304913,1.306555,1.328278,1.319484,1.34684,1.372967,1.44775,1.460027,1.453401,1.469437,1.596428,1.598968,1.612843,1.642665,1.744464,1.795259,1.872084,1.875055,1.879311,1.939258,2.027314,2.099555,2.183099,2.254771,2.352168,2.400954,2.41251,2.359798,2.360281,2.176103,2.032695,1.991429,1.988419,1.871788,2.031301,2.103485,2.164592,2.245239,2.201693,2.214599,2.28989,2.287758];
+var BT_OWN   = [1.0,1.010546,1.048408,1.117044,1.102196,1.005467,1.022638,1.035317,1.012021,1.042011,1.090019,1.096397,1.043086,1.042297,1.113195,1.090768,1.143857,1.186228,1.154629,1.204275,1.202089,1.216531,1.205697,1.224639,1.242408,1.299649,1.305736,1.296553,1.305606,1.403302,1.401175,1.407986,1.427265,1.50266,1.537608,1.592292,1.589873,1.588433,1.644344,1.722213,1.788621,1.864283,1.931467,2.019089,2.069884,2.076656,2.029698,2.001099,1.798005,1.635153,1.600458,1.593563,1.504744,1.615714,1.662623,1.70119,1.753217,1.717447,1.721444,1.769039,1.762342];
+var BT_HS300 = [1.0,1.007425,0.987266,0.981135,0.964544,0.968119,0.949184,0.934567,0.952767,0.971876,0.986254,0.974066,0.98101,1.021789,1.052944,1.011449,1.080192,1.144118,1.175108,1.141559,1.110524,1.094971,1.062489,1.031579,1.034252,1.015669,1.052568,1.013216,1.017948,1.027347,1.048397,1.048691,1.066247,1.086532,1.109338,1.111797,1.146207,1.203713,1.326929,1.343727,1.418635,1.471281,1.568497,1.704344,1.799,1.709504,1.666958,1.616571,1.551781,1.456807,1.467937,1.483063,1.383229,1.375957,1.346738,1.386373,1.419385,1.411541,1.385524,1.428689,1.469328];
+
+var BT_DATA = {rec:BT_REC, own:BT_OWN, hs300:BT_HS300};
+var BT_META = {
+  rec:{label:"推荐组合", color:"#4F7CFF", annual:0.18},
+  own:{label:"自选股组合", color:"#D4A020", annual:0.12},
+  hs300:{label:"沪深300", color:"#6B7280", annual:0.08}
+};
+</script>
+<script>
+"use strict";
+/* ===== 工具 ===== */
+function $(id){return document.getElementById(id);}
+function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+var toastTimer=null;
+function toast(msg){
+  var t=$("toast"); t.innerHTML=msg; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer=setTimeout(function(){t.classList.remove("show");},2200);
+}
+function openModal(id){$(id).classList.add("show");}
+function closeModal(id){$(id).classList.remove("show");}
+document.querySelectorAll(".modal-overlay").forEach(function(m){
+  m.addEventListener("click",function(e){if(e.target===m)m.classList.remove("show");});
+});
+
+/* ===== 状态 ===== */
+var watchlist = WATCH_DEFAULT.map(function(s){return {name:s.name,style:s.style,vec:s.vec.slice()};});
+var selectedRec = null;
+var recSeed = 1;
+var currentView = "home";
+
+/* ===== 导航路由 ===== */
+function switchView(view){
+  currentView = view;
+  document.querySelectorAll(".view").forEach(function(v){v.classList.remove("active");});
+  var el=$("view-"+view); if(el) el.classList.add("active");
+  document.querySelectorAll(".nav-item").forEach(function(n){
+    n.classList.toggle("active", n.getAttribute("data-view")===view);
+  });
+  var tags={home:"智能选股引擎",factors:"36 因子库",backtest:"回测验证",about:"方案说明"};
+  $("headerTag").textContent = tags[view]||"";
+  location.hash = "#/"+view;
+  if(view==="factors") renderFactors();
+  if(view==="backtest") renderBacktest();
+  window.scrollTo(0,0);
+}
+document.querySelectorAll(".nav-item").forEach(function(n){
+  n.addEventListener("click",function(){switchView(n.getAttribute("data-view"));});
+});
+$("hamburger").addEventListener("click",function(){
+  $("sidebar").classList.toggle("show");
+});
+window.addEventListener("hashchange",function(){
+  var h=location.hash.replace("#/","");
+  if(h && ["home","factors","backtest","about"].indexOf(h)>=0 && h!==currentView) switchView(h);
+});
+
+/* ===== 自选股管理 ===== */
+function renderWatch(){
+  $("watchCount").textContent = watchlist.length + " 只";
+  $("watchList").innerHTML = watchlist.map(function(s){
+    return '<div class="watch-item"><span class="nm">'+esc(s.name)+'</span><span class="st">'+esc(s.style)+'</span>'+
+      '<button class="rm" data-rm="'+esc(s.name)+'">✕</button></div>';
+  }).join("");
+  var names={}; watchlist.forEach(function(s){names[s.name]=1;});
+  var quick = QUICK_ADDS.map(function(c){return findStock(c);}).filter(function(s){return s&&!names[s.name];});
+  $("quickTags").innerHTML = quick.length ? quick.map(function(s){
+    return '<span class="t" data-add="'+esc(s.code)+'">+ '+esc(s.name)+'</span>';
+  }).join("") : '<span style="font-size:11px;color:var(--muted-2)">热门已全部加入</span>';
+}
+function addStock(src,opts){
+  opts=opts||{};
+  if(watchlist.filter(function(s){return s.name===src.name;}).length){toast("<b>"+esc(src.name)+"</b> 已在自选股中");return false;}
+  if(watchlist.length>=10){toast("自选股最多 10 只");return false;}
+  watchlist.push({name:src.name,style:src.style,vec:src.vec.slice()});
+  renderWatch(); recompute(false);
+  if(!opts.silent) toast("已加入 <b>"+esc(src.name)+"</b>");
+  return true;
+}
+$("watchList").addEventListener("click",function(e){
+  var b=e.target.closest("[data-rm]");if(!b)return;
+  var name=b.getAttribute("data-rm");
+  watchlist=watchlist.filter(function(s){return s.name!==name;});
+  renderWatch();recompute(false);toast("已移除 "+esc(name));
+});
+$("quickTags").addEventListener("click",function(e){
+  var t=e.target.closest("[data-add]");if(!t)return;
+  var src=findStock(t.getAttribute("data-add"));if(src)addStock(src);
+});
+
+/* ===== 搜索弹窗 ===== */
+$("addStockBtn").addEventListener("click",function(){
+  openModal("searchModal");
+  var inp=$("stockSearchInput");
+  setTimeout(function(){inp.focus();},60);
+  inp.value=""; renderSearchResults();
+});
+$("stockSearchInput").addEventListener("input",renderSearchResults);
+function renderSearchResults(){
+  var q=($("stockSearchInput").value||"").trim().toLowerCase();
+  var box=$("stockSearchResults");
+  var names={};watchlist.forEach(function(s){names[s.name]=1;});
+  var matched=[];
+  for(var i=0;i<STOCK_UNIVERSE.length&&matched.length<15;i++){
+    var en=STOCK_UNIVERSE[i];
+    if(!q||en[0].indexOf(q)>=0||en[1].toLowerCase().indexOf(q)>=0) matched.push(en);
+  }
+  if(!matched.length){box.innerHTML='<div class="search-empty">未找到匹配「'+esc(q)+'」的股票</div>';return;}
+  box.innerHTML=matched.map(function(en){
+    var s=resolveStock(en);var added=!!names[s.name];
+    return '<div class="search-item'+(added?' disabled':'')+'" data-code="'+esc(s.code)+'">'+
+      '<span class="code">'+esc(s.code)+'</span>'+
+      '<div class="info"><div class="nm">'+esc(s.name)+'</div><div class="st">'+esc(s.style)+'</div></div>'+
+      '<span class="badge-add">'+(added?'已添加':'添加')+'</span></div>';
+  }).join("");
+}
+$("stockSearchResults").addEventListener("click",function(e){
+  var it=e.target.closest(".search-item");if(!it||it.classList.contains("disabled"))return;
+  var src=findStock(it.getAttribute("data-code"));
+  if(src&&addStock(src)) renderSearchResults();
+});
+
+/* ===== 推荐算法 ===== */
+function computeU(){
+  var u=[0,0,0,0,0,0,0];
+  watchlist.forEach(function(s){for(var i=0;i<7;i++)u[i]+=s.vec[i];});
+  for(var i=0;i<7;i++)u[i]=u[i]/(watchlist.length||1);
+  return u;
+}
+function cosine(a,b){
+  var d=0,na=0,nb=0;
+  for(var i=0;i<a.length;i++){d+=a[i]*b[i];na+=a[i]*a[i];nb+=b[i]*b[i];}
+  return d/(Math.sqrt(na)*Math.sqrt(nb)||1);
+}
+function rankRecs(u){
+  var names={};watchlist.forEach(function(s){names[s.name]=1;});
+  var scored=[];
+  for(var i=0;i<STOCK_UNIVERSE.length;i++){
+    var en=STOCK_UNIVERSE[i];
+    if(names[en[1]])continue;
+    if(/ST/i.test(en[1]))continue;
+    var cal=STOCK_CAL[en[0]];
+    var vec=cal?cal.vec:genVec(en[0]);
+    var style=cal?cal.style:genStyle(en[0]);
+    var sim=cosine(u,vec);
+    var minArr=vec.map(function(v,j){return{d:DIMS[j],v:Math.min(u[j],v)};});
+    minArr.sort(function(a,b){return b.v-a.v;});
+    var common=minArr.slice(0,3).map(function(o){return o.d;});
+    var enh=[];
+    vec.forEach(function(v,j){if(v>u[j]&&u[j]>0)enh.push({d:DIMS[j],up:(v-u[j])/u[j]});});
+    enh.sort(function(a,b){return b.up-a.up;});enh=enh.slice(0,3);
+    var es=enh.length?enh.reduce(function(a,b){return a+b.up;},0)/enh.length:0;
+    var raw=Math.pow(sim,0.7)*(1+0.3*Math.min(es,1));
+    var score=Math.round(Math.min(97,Math.max(55,raw/1.1*100)));
+    scored.push({stock:{code:en[0],name:en[1],style:style,vec:vec},sim:sim,common:common,enh:enh,score:score});
+  }
+  scored.sort(function(a,b){return b.score-a.score;});
+  var pool=scored.slice(0,30);
+  var rng=mulberry32(recSeed*2654435761);
+  pool.forEach(function(r){r._jitter=r.score+(rng()-0.5)*6;});
+  pool.sort(function(a,b){return b._jitter-a._jitter;});
+  return pool.slice(0,5);
+}
+
+/* ===== 雷达图 ===== */
+var radarChart=null,btChart=null;
+function hasEcharts(){return typeof window.echarts!=="undefined";}
+function initRadar(){
+  if(!hasEcharts()){$("radarChart").innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:260px;color:var(--muted-2);font-size:13px">ECharts 未加载</div>';return;}
+  radarChart=echarts.init($("radarChart"));
+  radarChart.setOption({
+    tooltip:{trigger:"item"},
+    radar:{indicator:DIMS.map(function(d){return{name:d,max:100};}),radius:"62%",center:["50%","52%"],splitNumber:4,
+      axisName:{color:"#5A6480",fontSize:12},
+      splitLine:{lineStyle:{color:"rgba(30,41,80,.12)"}},
+      splitArea:{areaStyle:{color:["rgba(37,99,235,.03)","rgba(30,41,80,.03)"]}},
+      axisLine:{lineStyle:{color:"rgba(30,41,80,.12)"}}},
+    series:[{type:"radar",symbol:"circle",symbolSize:4,
+      lineStyle:{color:"#2563EB",width:2.5},itemStyle:{color:"#2563EB"},
+      areaStyle:{color:"rgba(37,99,235,.30)"},data:[{value:[0,0,0,0,0,0,0],name:"我的基因画像"}]}]
+  });
+  window.addEventListener("resize",function(){radarChart&&radarChart.resize();});
+}
+function animateRadar(target){
+  if(!radarChart){if(!hasEcharts())return;initRadar();}
+  var cur=[0,0,0,0,0,0,0],start=null,dur=1000;
+  function step(ts){
+    if(!start)start=ts;var p=Math.min(1,(ts-start)/dur);var e=1-Math.pow(1-p,3);
+    var v=target.map(function(t,i){return Math.round(cur[i]+(t-cur[i])*e);});
+    radarChart.setOption({series:[{data:[{value:v}]}]});
+    if(p<1)requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+function summarySentence(u){
+  function lb(i,hi,hw,mw){return u[i]>=hi?hw:(u[i]>=50?mw:"偏弱");}
+  var cands=[{t:lb(1,78,"高质量","质量稳健"),s:u[1]},{t:lb(2,72,"高成长","中成长"),s:u[2]},
+    {t:lb(3,72,"强趋势","趋势一般"),s:u[3]},{t:lb(6,68,"机构关注","机构一般"),s:u[6]}];
+  cands.sort(function(a,b){return b.s-a.s;});
+  var keep=[],weak=0;
+  cands.slice(0,4).forEach(function(o){if(o.t.indexOf("一般")<0)keep.push(o.t);else weak++;});
+  if(weak>=3||!keep.length)keep=["均衡型"];
+  return "你的自选股偏「<b>"+keep.join(" + ")+"</b>」。";
+}
+
+/* ===== 推荐渲染 ===== */
+function renderRecs(ranked){
+  $("recList").innerHTML=ranked.map(function(r,i){
+    var sel=selectedRec&&selectedRec.stock.name===r.stock.name?" sel":"";
+    return '<div class="rec-item'+sel+'" data-rec="'+i+'">'+
+      '<span class="rk">'+(i+1)+'</span>'+
+      '<div class="body"><div class="nm">'+esc(r.stock.name)+' <span class="sim">相似 '+Math.round(r.sim*100)+'%</span></div>'+
+      '<div class="met">'+esc(r.stock.style)+' · 共同基因 '+esc(r.common.join("、"))+'</div></div>'+
+      '<div class="score"><div class="v">'+r.score+'</div><div class="l">综合评分</div></div></div>';
+  }).join("");
+}
+function selectRec(r){
+  selectedRec=r;
+  document.querySelectorAll(".rec-item").forEach(function(el,i){
+    el.classList.toggle("sel", selectedRec&&rankedCache[i]&&selectedRec.stock.name===rankedCache[i].stock.name);
+  });
+  renderExplain(r);
+}
+var rankedCache=[];
+function renderExplain(r){
+  $("explainName").textContent=r.stock.name;
+  $("explainScore").textContent=r.score;
+  $("explainSim").textContent="综合评分 · 与你的自选股相似度 "+Math.round(r.sim*100)+"%";
+  $("explainCommon").innerHTML=r.common.map(function(d){return '<span class="g">'+esc(d)+'</span>';}).join("");
+  $("explainEnh").innerHTML=r.enh.length?r.enh.map(function(o){
+    return '<span class="g up">'+esc(o.d)+' +'+Math.round(o.up*100)+'%</span>';
+  }).join(""):'<span style="color:var(--muted-2);font-size:12px">无明显增强点</span>';
+}
+$("recList").addEventListener("click",function(e){
+  var it=e.target.closest("[data-rec]");if(!it)return;
+  var idx=+it.getAttribute("data-rec");
+  if(rankedCache[idx]){selectRec(rankedCache[idx]);openRecDetail(rankedCache[idx]);}
+});
+function openRecDetail(r){
+  var u=computeU();
+  var rows="";
+  for(var i=0;i<7;i++){
+    rows+='<tr><td>'+esc(DIMS[i])+'</td><td style="font-family:var(--num)">'+Math.round(u[i])+'</td>'+
+      '<td style="font-family:var(--num);color:var(--primary)">'+r.stock.vec[i]+'</td>'+
+      '<td style="font-family:var(--num)">'+(r.stock.vec[i]-Math.round(u[i])>=0?"+":"")+(r.stock.vec[i]-Math.round(u[i]))+'</td></tr>';
+  }
+  $("recModalContent").innerHTML=
+    '<h3>'+esc(r.stock.name)+' <span class="badge candidate" style="margin-left:8px">相似 '+Math.round(r.sim*100)+'%</span></h3>'+
+    '<div style="font-size:12px;color:var(--muted-2);margin-bottom:14px">'+esc(r.stock.style)+' · 综合评分 '+r.score+'</div>'+
+    '<h5 style="font-size:13px;margin-bottom:8px;color:var(--muted)">因子暴露对比（你 vs 候选）</h5>'+
+    '<table class="data-table"><thead><tr><th>维度</th><th>你的画像</th><th>候选股</th><th>差值</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+    '<div class="risk-note"><b>风险提示：</b>因子评分不预示未来收益；以上为公开数据因子分析，不构成投资建议。</div>';
+  openModal("recModal");
+}
+
+/* ===== 刷新推荐 ===== */
+$("recRefreshBtn").addEventListener("click",function(){
+  recSeed=Math.floor(Math.random()*100000)+1;
+  var btn=this;btn.classList.add("spinning");
+  setTimeout(function(){btn.classList.remove("spinning");},600);
+  recompute(false);
+  toast("已从全市场重新推荐");
+});
+
+/* ===== 雷达刷新 ===== */
+$("radarRefresh").addEventListener("click",function(){
+  var btn=this;btn.classList.add("spinning");
+  setTimeout(function(){btn.classList.remove("spinning");},500);
+  recompute(true);
+  toast("画像已刷新");
+});
+
+/* ===== 重算（自选股变动实时联动） ===== */
+function recompute(animate){
+  var u=computeU();
+  if(animate)animateRadar(u);
+  else if(radarChart)radarChart.setOption({series:[{data:[{value:u}]}]});
+  $("radarSummary").innerHTML=summarySentence(u);
+  rankedCache=rankRecs(u);
+  renderRecs(rankedCache);
+  if(rankedCache.length){
+    var keep=selectedRec&&rankedCache.filter(function(r){return r.stock.name===selectedRec.stock.name;})[0];
+    selectRec(keep||rankedCache[0]);
+  }
+}
+
+/* ===== 因子库 ===== */
+var factorFilter="全部";
+function renderFactors(){
+  var dims=["全部"].concat(DIMS);
+  $("factorFilters").innerHTML=dims.map(function(d){
+    return '<span class="f'+(factorFilter===d?" active":"")+'" data-f="'+esc(d)+'">'+esc(d)+'</span>';
+  }).join("");
+  var tbody=$("factorTable").querySelector("tbody");
+  var rows=FACTORS.filter(function(f){return factorFilter==="全部"||f[0]===factorFilter;});
+  tbody.innerHTML=rows.map(function(f){
+    return '<tr><td>'+esc(f[0])+'</td><td><b>'+esc(f[1])+'</b></td><td style="font-family:var(--num);font-size:12px">'+esc(f[2])+'</td>'+
+      '<td style="font-family:inherit;font-size:12.5px">'+esc(f[3])+'</td>'+
+      '<td>'+(f[4]>0?'<span style="color:var(--up)">正向</span>':'<span style="color:var(--down)">反向</span>')+'</td>'+
+      '<td style="font-size:12px">'+esc(f[5])+'</td>'+
+      '<td style="font-family:var(--num)">'+f[7]+'</td><td style="font-family:var(--num)">'+f[8]+'</td>'+
+      '<td>'+(f[9]?'<span class="badge candidate">首期开放</span>':'<span class="badge neutral">后续开放</span>')+'</td></tr>';
+  }).join("");
+}
+$("factorFilters")&&$("factorFilters").addEventListener("click",function(e){
+  var f=e.target.closest("[data-f]");if(!f)return;
+  factorFilter=f.getAttribute("data-f");renderFactors();
+});
+
+/* ===== 回测 ===== */
+function renderBacktest(){
+  if(!hasEcharts()){$("btChart").innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:360px;color:var(--muted-2)">ECharts 未加载</div>';}
+  else{
+    if(btChart)btChart.dispose();
+    btChart=echarts.init($("btChart"));
+    btChart.setOption({
+      tooltip:{trigger:"axis"},
+      legend:{data:["推荐组合","自选股组合","沪深300"],top:0,textStyle:{color:"#5A6480"}},
+      grid:{left:50,right:20,top:40,bottom:30},
+      xAxis:{type:"category",data:BT_MONTHS,axisLabel:{color:"#8B93A8",fontSize:10,interval:5}},
+      yAxis:{type:"value",axisLabel:{color:"#8B93A8",formatter:"{value}"},splitLine:{lineStyle:{color:"rgba(30,41,80,.06)"}}},
+      series:[
+        {name:"推荐组合",type:"line",data:BT_REC,smooth:true,lineStyle:{color:"#2563EB",width:2.5},itemStyle:{color:"#2563EB"},areaStyle:{color:"rgba(37,99,235,.08)"},symbol:"none"},
+        {name:"自选股组合",type:"line",data:BT_OWN,smooth:true,lineStyle:{color:"#D97706",width:2},itemStyle:{color:"#D97706"},symbol:"none"},
+        {name:"沪深300",type:"line",data:BT_HS300,smooth:true,lineStyle:{color:"#6B7280",width:1.5,type:"dashed"},itemStyle:{color:"#6B7280"},symbol:"none"}
+      ]
+    });
+    window.addEventListener("resize",function(){btChart&&btChart.resize();});
+  }
+  // 分年收益
+  var years={};
+  BT_MONTHS.forEach(function(m,i){
+    var y=m.substring(0,4);
+    if(!years[y])years[y]={rec:null,own:null,hs:null,recStart:null,ownStart:null,hsStart:null};
+    if(years[y].recStart===null){years[y].recStart=BT_REC[i];years[y].ownStart=BT_OWN[i];years[y].hsStart=BT_HS300[i];}
+    years[y].rec=BT_REC[i];years[y].own=BT_OWN[i];years[y].hs=BT_HS300[i];
+  });
+  var yrows="";
+  Object.keys(years).forEach(function(y){
+    var rr=((years[y].rec/years[y].recStart-1)*100).toFixed(1);
+    var oo=((years[y].own/years[y].ownStart-1)*100).toFixed(1);
+    var hh=((years[y].hs/years[y].hsStart-1)*100).toFixed(1);
+    var ex=(rr-hh).toFixed(1);
+    yrows+='<tr><td>'+y+'</td>'+
+      '<td style="color:'+(rr>=0?'var(--up)':'var(--down)')+'">'+(rr>=0?'+':'')+rr+'%</td>'+
+      '<td style="color:'+(oo>=0?'var(--up)':'var(--down)')+'">'+(oo>=0?'+':'')+oo+'%</td>'+
+      '<td style="color:'+(hh>=0?'var(--up)':'var(--down)')+'">'+(hh>=0?'+':'')+hh+'%</td>'+
+      '<td style="color:'+(ex>=0?'var(--up)':'var(--down)')+'">'+(ex>=0?'+':'')+ex+'%</td></tr>';
+  });
+  $("yearTable").querySelector("tbody").innerHTML=yrows;
+}
+
+/* ===== 初始化 ===== */
+function init(){
+  var now=new Date();
+  $("genTime").textContent=("0"+now.getHours()).slice(-2)+":"+("0"+now.getMinutes()).slice(-2);
+  initRadar();
+  renderWatch();
+  recompute(false);
+  // hash 路由
+  var h=location.hash.replace("#/","");
+  if(h&&["home","factors","backtest","about"].indexOf(h)>=0) switchView(h);
+}
+if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",init);
+else init();
+</script>
+</body>
+</html>
