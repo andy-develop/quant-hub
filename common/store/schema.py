@@ -1,0 +1,171 @@
+"""数据层唯一契约定义处。
+
+冻结规则（同时进 CODEOWNERS，任何变更需本文件 owner review）：
+
+| 变更类型                              | 允许 | 说明 |
+|---------------------------------------|------|------|
+| 新增列（OPTIONAL）                    | ✅   | 旧分区无该列，reader 返回 NaN，上层不受影响 |
+| 新增资产类目录（fund/ bond/）         | ✅   | 走同一套 writer + gates，不碰已有分区 |
+| 新增 meta 表（北向资金、ETF 份额）    | ✅   | 同上 |
+| 新增分区粒度                          | ✅   | 只要 reader 兼容 |
+| 改列名/改类型/改单位/改口径           | ❌   | 需升 CONTRACT_VERSION + 双写过渡期 + 三域全部回归 |
+| 改 hfq/raw 的历史值                   | ❌   | 冻结不可变；writer 遇已存在日期直接抛异常 |
+| 改 retention 数值                     | ⚠️   | 只允许调大；调小需显式确认（会永久删数据，先 export Release） |
+
+三条硬性陷阱（从注释升级为断言，见 tests/contract/）：
+
+1. **volume 单位 = 股**。baostock 是股，腾讯快照 parts[37] 是**万元**。
+   混入同一张表会让所有成交量因子（放量滞涨退出、拥挤度）静默失真。
+   换算责任在各 vendor 适配器，本层只认「股」。
+2. **代码格式**：baostock `sh.600000` vs 腾讯 `1.600000` vs 短代码 `600000`。
+   统一必须收进 reader.py 一处，且顺序不能反：**先 code_map 归一，再叠加 fixup 覆盖**。
+   顺序颠倒会让覆盖 isin 全 miss -> 整段重复行（2026-09-08 verify_store 已实测）。
+3. **hfq 冻结**：历史值永久冻结。重复回补 = 成倍重复行。
+   writer 遇到分区内已存在的 (code, date) -> 抛异常而非覆盖。
+
+全收益指数警告（爆炸半径因合并从一个域变三个域）：
+
+    全收益指数（H20269/H30269/H00300）**只有中证官网有**，绝不能用腾讯的价格指数替代。
+    ETF 域 v7.12「地基修正」就是错用价格指数计价漏掉全部分红，导致策略收益
+    从 +285.3% 被系统性低估为 +168.2%。
+"""
+
+from __future__ import annotations
+
+CONTRACT_VERSION = "1.0"
+
+# ---------------------------------------------------------------------------
+# 列定义（冻结项）
+# ---------------------------------------------------------------------------
+COLUMNS: dict[str, str] = {
+    "code": "string[pyarrow]",      # 短代码 600000 / 512890 / H20269
+    "date": "date32",
+    "open": "float64",
+    "high": "float64",
+    "low": "float64",
+    "close": "float64",
+    "volume": "int64",              # ★单位=股（baostock 是股；腾讯快照 parts[37] 是万元）
+    "amount": "float64",            # 元
+}
+
+# 可选列：仅部分资产类有。旧分区无该列时 reader 返回 NaN。
+OPTIONAL: dict[str, str] = {
+    "turnover": "float64",          # 仅 etf / index 有
+}
+
+# weekly / monthly 派生分区必带；用于剔除未完成 bar（见 FREQ 与 §is_partial 说明）
+PARTIAL_FLAG = "is_partial"
+
+# 主键（用于无重复键断言与 writer 的冻结检查）
+PRIMARY_KEY = ("code", "date")
+
+# ---------------------------------------------------------------------------
+# 不变量（契约测试逐条断言）
+# ---------------------------------------------------------------------------
+INVARIANTS: tuple[str, ...] = (
+    "close_not_null_positive",      # close 非空且 > 0
+    "no_duplicate_keys",            # 无 (code, date) 重复
+    "date_in_trade_calendar",       # 日期必须是交易日（需 calendar，见 reader.load_calendar）
+    "monotonic_within_code",        # 单 code 内日期单调递增
+    "open_high_low_close_consistent",  # low <= min(o,c) <= max(o,c) <= high
+)
+
+# ---------------------------------------------------------------------------
+# 复权口径
+# ---------------------------------------------------------------------------
+FQ: dict[str, str] = {
+    "hfq": "冻结·只 append 新日期",                       # 信号/回测/因子，历史值永久冻结
+    "raw": "冻结·只 append",                              # 涨跌停判定 + volume/amount 真实值
+    "qfq": "已废弃（见方案 §0.3：除权处假跳变，动量最高偏差 1.75pp）",
+}
+
+# ---------------------------------------------------------------------------
+# 频率与派生
+# ---------------------------------------------------------------------------
+# daily 是唯一权威抓取源；weekly/monthly 由 daily 确定性重采样，物化入库但标记 derived。
+#
+# 为什么不处理 is_partial 是正确性问题而不是优化项：
+#   ETF 域 §31 H-1 整改实测 —— build_signals 若不剔除「未完成 ISO 周」末日行，
+#   实盘每日运行末日=今天（未完成周）命中本周 J，回测 ffill 上一周，
+#   **97.7% 周中日期信号不同**。
+#
+# 判定必须用交易日历，禁止 weekday>=4 降级 —— 长假尤其要紧：国庆前最后一根周 bar
+# 若被当成完整周，周线 KDJ/RSI 会连续错一整周。
+FREQ: dict[str, dict] = {
+    "daily": {"derived": False},
+    "weekly": {
+        "derived": True,
+        "rule": "ISO-week|ME|closed-only|calendar-aware",
+        # ISO 周（周一起）；按周五对齐会差一根
+    },
+    "monthly": {
+        "derived": True,
+        "rule": "calendar-month|ME|closed-only|calendar-aware",
+        # 必须用 "ME"：pandas 2.2 弃用 "M"、3.0 移除。
+        # 短线域 pandas==3.0.5 与 ETF 域 pandas<2.3 读同一份 weekly 时口径不能分叉。
+    },
+}
+
+AGGREGATOR_VERSION = "common/aggregate.py@v1"
+
+# ---------------------------------------------------------------------------
+# 保留期（★交易日，不是自然日）
+# ---------------------------------------------------------------------------
+# 为什么用交易日：长假会让"3 自然年"与"730 交易日"差 5–8 天。
+RETENTION: dict[str, int | None] = {
+    "stock": 730,
+    "etf": 2430,     # 10 年；体积仅 4MB，"ETF 保留期可以给得很宽松，不用犹豫"
+    "index": None,   # 不过期（体积可忽略）
+}
+
+# ---------------------------------------------------------------------------
+# 资产类
+# ---------------------------------------------------------------------------
+ASSETS: tuple[str, ...] = ("stock", "etf", "index")
+
+# 域标识（domain= 参数强制，跨域读=口径污染）
+DOMAINS: tuple[str, ...] = ("shortterm", "etf", "selected")
+
+# 域私有 meta：禁止跨域读。CI 静态检查 domains/etf/** 不得读 meta/st_history
+DOMAIN_PRIVATE_META: dict[str, tuple[str, ...]] = {
+    "shortterm": ("st_history",),
+    "etf": (),
+    "selected": (),
+}
+
+# 大盘多周期（方案 §2.7）—— 一等公民，全历史、不做过期
+BROAD_INDEX_CODES: tuple[str, ...] = ("sh000001", "sz399001")
+
+# 基准 / 全收益（★全收益只有中证官网有）
+INDEX_SPECIAL: dict[str, str] = {
+    "H20269": "中证红利全收益（只有 csindex 有，绝不可用价格指数替代）",
+    "H30269": "中证红利低波全收益（同上）",
+    "H00300": "沪深300全收益（同上）",
+    "000300": "沪深300价格指数",
+    "sh000300": "沪深300（腾讯源）",
+    "sh000852": "中证1000（腾讯源）",
+}
+
+
+def columns_for(asset: str) -> tuple[str, ...]:
+    """返回该资产类的合法列集合（必选 + 可选，按需裁剪）。"""
+    if asset not in ASSETS:
+        raise ValueError(f"unknown asset: {asset!r}, expected one of {ASSETS}")
+    return tuple(COLUMNS) + tuple(OPTIONAL)
+
+
+def check_retention(asset: str, trade_days: int) -> None:
+    """校验某资产类的实际保留交易日数是否符合契约。
+
+    只允许 >= 契约值（调大）。调小需显式确认（会永久删数据）。
+    """
+    if asset not in RETENTION:
+        raise ValueError(f"unknown asset: {asset!r}")
+    want = RETENTION[asset]
+    if want is None:
+        return
+    if trade_days < want:
+        raise AssertionError(
+            f"retention violation: asset={asset} has {trade_days} trade days "
+            f"< contract {want} (调小会使历史数据永久丢失; 如需调小须先 export Release 归档并显式确认)"
+        )

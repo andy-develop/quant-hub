@@ -1,0 +1,91 @@
+name: daily
+
+# 合并后的每日流水线（数据仓就位后启用，当前为 Phase-2 脚手架）
+#
+# 数据流：
+#   quant-hub-data(私有) ──► fetch/补数 ──► 门禁(覆盖率/交易日/半截bar)
+#     ──► 三域 payload 适配 ──► 单页壳构建 ──► HSK 发布状态机 ──► 回读校验
+#
+# 启用条件（docs/落地手册.md §8 Phase-2）：
+#   1. quant-hub-data 建成且 CONTRACT_VERSION 对齐
+#   2. Secrets: HSK_API_KEY / DATA_TOKEN 配置完成
+#   3. 把本文件顶部 `if: false` 去掉
+
+on:
+  schedule:
+    - cron: '30 8 * * 1-5'     # 16:30 北京时间（收盘后）
+    - cron: '0 13 * * 1-5'     # 21:00 北京时间（补跑兜底，幂等）
+  workflow_dispatch:
+
+concurrency:
+  group: daily
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    if: false                  # ← Phase-2 开关：数据仓就位后改为 true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r common/requirements.txt
+
+      - name: 拉取数据仓（私有）
+        run: |
+          git clone --depth 1 "https://x-access-token:${{ secrets.DATA_TOKEN }}@github.com/andy-develop/quant-hub-data.git" data-repo
+          # 契约版本核对：不一致立即中止（宁缺勿错）
+          python - <<'PY'
+          import json, sys
+          a = json.load(open("common/store/schema.py contracts", "r")) if False else None
+          from common.store.schema import CONTRACT_VERSION
+          b = json.load(open("data-repo/manifest.json", encoding="utf-8"))
+          assert b.get("contract_version") == CONTRACT_VERSION, (
+              f"数据仓契约 {b.get('contract_version')} != 代码契约 {CONTRACT_VERSION}")
+          print("契约版本对齐:", CONTRACT_VERSION)
+          PY
+
+      - name: 覆盖率门禁（<80% 红灯中止，不落盘）
+        run: |
+          python -m common.gates.coverage --asset stock \
+            --data-root data-repo/data --write-runlog state/data/runlog
+
+      - name: 三域 payload 适配
+        run: python -m tools.build_payloads --data-root data-repo/data --out state/payload
+
+      - name: 单页壳构建（注入真实数据）
+        run: python -m web.build --src src --out dist/index.html --payload-dir state/payload
+
+      - name: HSK 发布（状态机：禁用自动换资源 / pending 不报错 / 回读校验指纹）
+        env:
+          HSK_API_KEY: ${{ secrets.HSK_API_KEY }}
+        run: python -m tools.publish_cli --content dist/index.html --state state/publish
+
+      - name: 提交发布记录（资源 ID 必须留档，防止资源无限增殖）
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/publish state/data/runlog
+          git diff --cached --quiet || git commit -m "publish: $(date -u +'%F')"
+          git push
+
+      - name: 失败告警（不重复开 issue）
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="daily 运行失败"
+          N=$(gh issue list -R "${{ github.repository }}" --state open --search "in:title \"$TITLE\"" --json number --jq 'length')
+          if [ "$N" = "0" ]; then
+            gh issue create -R "${{ github.repository }}" -t "$TITLE" \
+              -b "失败 run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi

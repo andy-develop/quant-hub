@@ -1,0 +1,183 @@
+fix §0.4 沪市覆盖故障（snapshot_day 静默丢弃）
+
+事故现象（连续 4 个交易日：2026-09-07 ~ 09-10）
+    raw_2026090{7,8,9},10.parquet 逐日入库总数恒为 ~2925 只；
+    沪市 39 / 2316 = 1.7%，深市 ~2886 / 2899 = 99.6%。
+    39 = 2316 − 38×60 —— 每批 60 只，前 38 个批次（沪市为主）整体失败被静默丢弃。
+
+根因：snapshot_day() 的四条静默 continue
+    ① except Exception          → 整批失败，只 sleep 2 秒就 continue，无重试无记账
+    ② len(parts) < 40           → 腾讯限流降级响应字段变少，整条丢弃
+    ③ startswith("v_sh") 二值判断 → ★ 降级格式前缀是 v_s_sh600004，
+                                    判成 sz → sz600004 → 不在 sym_map → 丢弃
+    ④ except ValueError         → 解析异常静默丢弃
+
+  第 ③ 条把「市场判定」和「格式判定」耦合在一个 startswith 里是设计缺陷：
+  沪市行的前缀判定为假后落到 else 分支当深市处理，深市行恰好正确所以没暴露，
+  导致故障长期只表现为"沪市少一半多"而不报错。
+
+修复要点
+    1. 显式解析行前缀（v_ / v_s_ / sh|sz|bj），市场与格式解耦，禁止二值猜测
+    2. 降级格式（v_s_）单独解析路径，不再因字段数不足整条丢弃
+    3. 四条丢弃路径全部计数（FetchStats），由覆盖率门禁统一判定，绝不静默
+    4. 批内失败逐只重试一次；批次整体失败指数退避重试 3 次
+    5. 仍失败写入 manifest.missing_codes，交 21:00 补跑 cron 补齐
+
+落地方式（与 quant-hub 合并方案一致）
+    修复后的解析逻辑已抽到 quant-hub/common/datasource/vendor_tencent.py，
+    quant-lab/scripts/daily_update.py 改为 import 该模块，避免三域各写一份。
+
+--- a/quant-lab/scripts/daily_update.py
++++ b/quant-lab/scripts/daily_update.py
+@@ -18,6 +18,14 @@
+ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库根目录(本地/CI通用)
+ META, KDIR, POOL = f"{BASE}/data/meta", f"{BASE}/data/kline", f"{BASE}/data/pool"
+ UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
++
++# ★ §0.4 修复：快照解析（含市场判定）移到 common/datasource/vendor_tencent.py，
++#   本文件不再自行 split/startswith 判定市场。quant-hub 未就位时回落到本地 vendor。
++try:
++    from common.datasource.vendor_tencent import parse_qt_batch_response
++except ImportError:  # pragma: no cover - 合并过渡期
++    from quant_hub_vendor_tencent import parse_qt_batch_response  # type: ignore
++from common.datasource import FetchStats
++from common.gates.coverage import check_stock_coverage
+ 
+ 
+ def make_session() -> requests.Session:
+@@ -49,48 +57,71 @@ def load_store() -> pd.DataFrame:
+     return df.sort_values(["code", "date"]).reset_index(drop=True)
+ 
+ 
+-def snapshot_day(s: requests.Session, secids: list[str], day_ts: pd.Timestamp) -> pd.DataFrame:
+-    """腾讯批量快照 -> 当日OHLCV (不复权)"""
+-    sym_map = {}
+-    for secid in secids:
+-        mkt, num = secid.split(".")
+-        sym_map[("sh" if mkt == "1" else "sz") + num] = secid
+-    rows: list[dict] = []
+-    syms = list(sym_map)
+-    for i in range(0, len(syms), 60):
+-        batch = syms[i:i + 60]
+-        try:
+-            r = s.get("https://qt.gtimg.cn/q=" + ",".join(batch), timeout=15)
+-            r.encoding = "gbk"
+-        except Exception:
+-            time.sleep(2)
+-            continue
+-        for line in r.text.strip().split(";"):
+-            if "=" not in line:
+-                continue
+-            parts = line.split("=", 1)[1].strip('"').split("~")
+-            if len(parts) < 40:
+-                continue
+-            sym = parts[2]
+-            sym_full = ("sh" if line.startswith("v_sh") else "sz") + sym
+-            if sym_full not in sym_map:
+-                continue
+-            try:
+-                o, c, h, l = float(parts[5]), float(parts[3]), float(parts[33]), float(parts[34])
+-                v = float(parts[6]) if parts[6] else 0.0
+-                prev = float(parts[4])
+-                amt = float(parts[37]) * 1e4 if parts[37] else 0.0   # 成交额(万元) -> 元
+-            except ValueError:
+-                continue
+-            if c <= 0 or o <= 0:
+-                continue
+-            rows.append({"code": sym_map[sym_full], "date": day_ts, "open": o, "close": c,
+-                         "high": h, "low": l, "volume": v, "amount": amt, "prev_close": prev})
+-        time.sleep(0.1)
+-    return pd.DataFrame(rows)
++BATCH_SIZE = 60          # 与旧实现一致（实测 ~93 请求覆盖全 A）
++BATCH_RETRY = 3          # 批次整体失败的重试次数（指数退避）
++
++
++def _sym_map(secids: list[str]) -> dict[str, str]:
++    """secid(1.600004) -> 腾讯符号(sh600004) 的映射，同时保留反向索引。"""
++    out: dict[str, str] = {}
++    for secid in secids:
++        mkt, num = str(secid).split(".")
++        out[("sh" if mkt == "1" else "sz") + num] = secid
++    return out
++
++
++def _fetch_batch(s: requests.Session, batch: list[str], stats: FetchStats,
++                 smap: dict[str, str]) -> list[dict]:
++    """取一批快照。批次失败指数退避重试；重试耗尽后逐只重试一次。"""
++    last_exc: Exception | None = None
++    for attempt in range(BATCH_RETRY):
++        try:
++            r = s.get("https://qt.gtimg.cn/q=" + ",".join(batch), timeout=15)
++            r.encoding = "gbk"
++            return parse_qt_batch_response(r.text, smap, stats)
++        except Exception as e:                                  # noqa: BLE001
++            last_exc = e
++            # ★ 不再静默 continue：记账 + 指数退避（1s / 2s / 4s）
++            stats.dropped_batch_exc += 1
++            time.sleep(2 ** attempt)
++    # 重试耗尽：逐只再试一次，尽可能救回可用数据（沪市限流常是整批被拒）
++    rows: list[dict] = []
++    for sym in batch:
++        try:
++            r = s.get("https://qt.gtimg.cn/q=" + sym, timeout=15)
++            r.encoding = "gbk"
++            rows += parse_qt_batch_response(r.text, smap, stats)
++        except Exception:                                       # noqa: BLE001
++            stats.dropped_batch_exc += 1
++        time.sleep(0.15)
++    if not rows:
++        print(f"[WARN] 批次重试后仍为空({len(batch)}只): {last_exc}", flush=True)
++    return rows
++
++
++def snapshot_day(s: requests.Session, secids: list[str],
++                 day_ts: pd.Timestamp, *, universe: dict | None = None,
++                 logger=None) -> pd.DataFrame:
++    """腾讯批量快照 -> 当日OHLCV (不复权)。
++
++    ★ §0.4 修复版：所有丢弃路径均计数，不静默；结束时跑覆盖率门禁。
++    """
++    smap = _sym_map(secids)
++    stats = FetchStats(vendor="tencent-qt")
++    syms = list(smap)
++    rows: list[dict] = []
++    for i in range(0, len(syms), BATCH_SIZE):
++        rows += _fetch_batch(s, syms[i:i + BATCH_SIZE], stats, smap)
++        time.sleep(0.1)
++
++    df = pd.DataFrame(rows)
++    if not df.empty:
++        df["date"] = day_ts
++
++    print(f"[snapshot] 取到 {len(df)}/{len(secids)} 只 | "
++          f"批失败 {stats.dropped_batch_exc} 短格式 {stats.dropped_short_format} "
++          f"未知码 {stats.dropped_unknown_code} 解析失败 {stats.dropped_parse_error}",
++          flush=True)
++    if logger:
++        logger(stats)
++    return df
++
++
++def _gate_snapshot(df: pd.DataFrame, universe: dict, day_ts: pd.Timestamp) -> None:
++    """覆盖率硬门禁：<95% 黄灯告警，<80% 红灯中止（不写盘）。"""
++    res = check_stock_coverage(df["code"].tolist() if not df.empty else [],
++                               universe, day=str(day_ts.date()))
++    if res.level == "red":
++        raise RuntimeError(
++            f"[§0.4 门禁] {day_ts:%Y-%m-%d} 快照覆盖率 {res.coverage:.1%} < "
++            f"{res.fail_threshold:.0%}（沪 {res.by_market.get('sh', 0):.1%} / "
++            f"深 {res.by_market.get('sz', 0):.1%}）—— 拒绝写盘，等补跑")
++    if res.level == "warn":
++        print(f"[WARN] 快照覆盖率 {res.coverage:.1%} 低于 {res.warn_threshold:.0%}，"
++              f"沪 {res.by_market.get('sh', 0):.1%} / 深 {res.by_market.get('sz', 0):.1%}",
++              flush=True)
+ 
+ 
+ def update_kline() -> pd.Timestamp:
+@@
+     snap = snapshot_day(s, listed, target_day)
+     if snap.empty:
+         print("快照获取失败!", flush=True)
+         return target_day
++    # ★ §0.4：覆盖率硬门禁 —— 沪市 1.7% 这类故障必须在写盘前中止
++    _gate_snapshot(snap, load_universe(basic), target_day)
