@@ -3,6 +3,9 @@
 量化中枢：短线策略（动量 + LightGBM 黑盒）/ ETF 策略（红利低波 + 行业轮动 + 沪深300 择时）/ 个性化选股 三域合并仓。
 
 > 施工依据：《quant-hub-合并方案》· 配套：`docs/落地手册.md`（完整落地手册）
+>
+> **在线合并页（LIVE）**：<https://andy-develop.github.io/quant-hub/> —— `build-publish.yml` 每交易日 08:12 / 17:35（北京）自动重发。
+> 行情数据在私有仓 `quant-hub-data`（指数资产类已真实首灌；个股/ETF 待迁移，见落地手册 §12.6）。
 
 ## 结构
 
