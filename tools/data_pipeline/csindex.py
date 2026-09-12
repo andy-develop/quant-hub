@@ -303,6 +303,19 @@ def run(codes=CSINDEX_CODES, *, root="data", asof=None, writer="data-etf-firstlo
     daily_df = bars_to_frame(rows_by_code, pd)
     if daily_df.empty:
         raise RuntimeError("抓取结果为空 —— 拒绝落盘（门禁）")
+
+    # ---- 1.5 交易日过滤（★ 根治 API 幻影行） ----
+    # 中证 index-perf 在长区间/边界时会回显 startDate 或非交易日（周末/节假日，见
+    # 首灌 verify 抓到 2014/2015/2020/2025/2026-07-19、2018-06-18 端午）。契约要求
+    # 只含交易日，以全项目权威交易日历为准过滤，不猜 API 行为。
+    n_before = len(daily_df)
+    daily_df = daily_df[
+        daily_df["date"].dt.date.map(lambda d: calendar.is_trading_day(d))
+    ].reset_index(drop=True)
+    n_dropped = n_before - len(daily_df)
+    if n_dropped:
+        logger(f"[calendar] 过滤 {n_dropped} 条非交易日幻影行"
+               f"（{len(daily_df)}/{n_before} 保留）")
     daily_by_code = {c: daily_df[daily_df["code"] == c] for c in codes}
 
     # ---- 2. 新鲜度门禁 ----
@@ -330,6 +343,7 @@ def run(codes=CSINDEX_CODES, *, root="data", asof=None, writer="data-etf-firstlo
     summary = {
         "pipeline": "csindex", "asof": asof.isoformat(), "writer": writer,
         "asset": "etf", "codes": list(codes), "daily_rows": int(len(daily_df)),
+        "rows_dropped_non_trading": n_dropped,
         "months_sealed": n_months,
         "freshness": {"level": level, **gate},
         "derived": [{k: m[k] for k in ("code", "freq", "rows", "partial_bars", "path")}
