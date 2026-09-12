@@ -89,3 +89,30 @@ def test_hfq_attaches_real_vol_amount_from_raw():
     assert out["close"].iloc[0] == pytest.approx(51.0)          # hfq 价保留
     assert out["amount"].iloc[0] == pytest.approx(10_200_000.0)  # 真实 amount，不是 51*vol*100
     assert out["volume"].iloc[0] == round(10_200_000.0 / 10.2)   # 真实股数
+
+
+def test_read_kline_dir_finds_flat_base_shards(tmp_path):
+    """回归：quant-lab base 分片平铺在 data/kline/ 顶层(raw_b0_00.parquet)，必须被读到。
+    此前只 glob base/<fq>/ 与 <fq>/ 子目录 -> 漏掉全部 base，只迁了 fixup+incremental(38K行)。"""
+    kline = tmp_path / "kline"
+    (kline / "fixup").mkdir(parents=True)
+    (kline / "incremental").mkdir(parents=True)
+    # 顶层平铺 base 分片（raw 与 hfq 各一个）+ qfq（应被忽略）
+    pd.DataFrame([{"code": "0.301665", "date": "2025-04-11", "open": 45.0, "close": 40.0,
+                   "high": 45.0, "low": 39.0, "volume": 1000.0}]).to_parquet(kline / "raw_b0_00.parquet")
+    pd.DataFrame([{"code": "0.301665", "date": "2025-04-11", "open": 90.0, "close": 80.0,
+                   "high": 90.0, "low": 78.0, "volume": 1000.0}]).to_parquet(kline / "hfq_b0_00.parquet")
+    pd.DataFrame([{"code": "0.301665", "date": "2025-04-11", "open": 1, "close": 1, "high": 1,
+                   "low": 1, "volume": 1.0}]).to_parquet(kline / "qfq_b0_00.parquet")  # 废弃,不应读
+    # fixup 覆盖行（权威）
+    pd.DataFrame([{"code": "0.301665", "date": "2025-04-11", "open": 44.0, "close": 41.0,
+                   "high": 45.0, "low": 39.0, "volume": 1100.0}]).to_parquet(kline / "fixup" / "raw_0_301665.parquet")
+
+    raw = SM.read_kline_dir(str(kline), "raw")
+    assert len(raw) == 1, "base+fixup 同(code,date)应去重为1行"
+    # fixup 覆盖 base：close 应为 fixup 的 41.0（后写覆盖先写）
+    assert raw["close"].iloc[0] == pytest.approx(41.0)
+    assert raw["code"].iloc[0] == "301665"   # 0.301665 归一
+
+    hfq = SM.read_kline_dir(str(kline), "hfq")
+    assert len(hfq) == 1 and hfq["close"].iloc[0] == pytest.approx(80.0)  # 只读 hfq_*，不混 raw/qfq

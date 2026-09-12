@@ -123,7 +123,10 @@ def read_kline_dir(kline_dir: str, fq: str, pd=None):
     from common.store.reader import normalize_code
     frames = []
     base = sorted(glob.glob(os.path.join(kline_dir, "base", fq, "*.parquet")))
-    base += sorted(glob.glob(os.path.join(kline_dir, f"{fq}", "*.parquet")))    # 旧平铺命名
+    base += sorted(glob.glob(os.path.join(kline_dir, fq, "*.parquet")))         # 子目录平铺
+    # ★ quant-lab 实际布局：base 分片平铺在 data/kline/ 顶层，命名 <fq>_b<worker>_<shard>.parquet
+    #   （hfq_b0_11.parquet / raw_b0_00.parquet …）。<fq>_ 前缀天然分隔 raw/hfq（T-2），qfq_* 不匹配。
+    base += sorted(glob.glob(os.path.join(kline_dir, f"{fq}_*.parquet")))
     fixup = sorted(glob.glob(os.path.join(kline_dir, "fixup", f"{fq}_*.parquet")))
     incr = sorted(glob.glob(os.path.join(kline_dir, "incremental", f"{fq}_*.parquet")))
     for grp in (base, fixup, incr):
