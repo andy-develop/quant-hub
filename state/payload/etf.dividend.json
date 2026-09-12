@@ -1,16 +1,16 @@
 {
  "domain": "etf",
  "variant": "dividend",
- "generated_at": "2026-09-12T11:47:14+08:00",
+ "generated_at": "2026-09-12T20:05:23+08:00",
  "data_date": "2026-09-09",
  "schema_version": 1,
  "payload": {
   "snapshot": {
-   "generated_at": "2026-09-11 12:09",
+   "generated_at": "2026-09-12 12:09",
    "data_date": "2026-09-09",
    "cal": {
-    "is_today_trade": true,
-    "next_trade": "2026-09-11",
+    "is_today_trade": false,
+    "next_trade": "2026-09-14",
     "cal_missing": false
    },
    "close": 24385.4,
@@ -617,7 +617,7 @@
    }
   },
   "backtest": {
-   "generated_at": "2026-09-11 12:09",
+   "generated_at": "2026-09-12 12:09",
    "start": "2016-09-08",
    "end": "2026-09-09",
    "dates": [
