@@ -10,3 +10,11 @@ web/dist/
 # 仅忽略本地数据版本与临时件：
 state/**/.local.json
 *.tmp
+
+# 本地数据仓（数据仓/代码仓分离，方案 §2）：不进代码仓
+data/
+domains/*/data/
+
+# 遗留本地中间件（无代码消费，勿误提交）
+state/data/calendar.json
+state/data/status.json

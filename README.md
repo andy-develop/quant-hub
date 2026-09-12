@@ -13,7 +13,8 @@
 - `common/` —— 三域共用的数据契约、交易日历、聚合器、门禁（覆盖率硬门禁）、限流兜底、腾讯行情 vendor（含 §0.4 沪市覆盖故障修复）
 - `web/` —— 三域前端合并为单页壳（CSS 作用域隔离、涨跌色逐域冻结、零 CDN 依赖）；`python -m web.build --src domains` **自包含构建**，无需再检出三个老仓
 - `common/payload/` —— 三域 payload 适配器（6 变体，含方案漏列的量化黑盒线）
-- `tools/` —— HSK 发布状态机（禁用自动换资源 / pending 不报错 / 回读校验指纹）
+- `tools/` —— 运营工具（Phase 5/6）：`publish_hsk.py` HSK 发布状态机（禁用自动换资源 / pending 不报错 / 回读校验指纹）· `retention.py` 周度封存+过期+体积报告 · `runlog.py` 各域 runlog 台账 · `repo_health.py` 周巡检 · `check_docs.py` AUTO-KPI 生成/校验
+- `state/` —— CI 中间态账本（carry-forward payload / HSK 指纹 / 各域 runlog，入 git 可回滚，见 `state/README.md`）
 - `tests/` —— 合并层 243 项测试（含 §0.4 事故回归锁）；三域测试在 `domains/*/tests`（CI 每域独立进程跑）
 
 ## 快速开始
@@ -33,6 +34,15 @@ python -m web.build --src domains --out web/dist/index.html   # 自包含单页�
 ## 数据与代码分离
 
 行情数据在私有仓 `quant-hub-data`（Phase-2）。数据契约冻结于 `common/store/schema.py`（`CONTRACT_VERSION=1.0`），改动需评审。
+
+## 运营自动化（Phase 5/6）
+
+| 流水线 | 触发 | 职责 |
+|---|---|---|
+| `data-retention.yml` | 周六 19:00 UTC | 周度封存+过期（个股 730 / ETF 2430 交易日，`retention.py`）+ 数据仓体积报告（700MB warn / 900MB error） |
+| `repo-health.yml` | 周一 01:01 UTC | 巡检最近 5 交易日各域 runlog + payload 体积 + 数据仓体积，异常自动开 issue（去重） |
+| `strategy-pm.yml` / `build-publish.yml` | 交易日 | 各域链路末尾写 `state/<d>/runlog/` 台账（`runlog.py`），并校验 README AUTO-KPI 与 payload 一致（`check_docs.py --check-only`） |
+
 
 ## 硬性约定（踩过坑的，勿动）
 
