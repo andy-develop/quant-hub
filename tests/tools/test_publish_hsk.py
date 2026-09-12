@@ -271,3 +271,44 @@ def test_known_resources_documented():
     assert etf_resource.isdigit() and len(etf_resource) == 19
     assert stock_resource.isdigit() and len(stock_resource) == 19
     assert etf_resource != stock_resource, "两域必须用不同资源，否则互相覆盖"
+
+
+# ---------------------------------------------------------------------------
+# ★ D3（方案 §6.1/§10.1）：已有资源更新被禁 -> 跳过，绝不新建第二个资源
+#   （旧"自动换资源"行为已移除 —— 它正是 ETF URL 945q5w→i48ya3→73f9qb 天天变的成因）
+# ---------------------------------------------------------------------------
+def test_D3_disabled_resource_does_not_reprovision(tmp_path):
+    from tools.publish_hsk import PublishRecord, StateStore, PublishState, FAILED, DISABLED_CODE
+    store = StateStore(str(tmp_path))
+    store.save(PublishRecord(domain="etf", resource_id="OLD123", url="https://old.gicp.fun"))
+
+    calls = []
+
+    def push(fp, rid):
+        calls.append(rid)
+        return f"update function is disabled ({DISABLED_CODE})"
+
+    st = PublishState(domain="etf", store=store, sleep=lambda s: None, log=lambda *a, **k: None)
+    rec = st.run(content="<html>data_date=2026-09-12</html>", data_date="2026-09-12",
+                 push=push, verify=lambda u, f: True)
+
+    assert rec.state == FAILED
+    assert calls == ["OLD123"], f"D3 违反：应只 update 这一个资源，实际调用 {calls}（出现 None=新建）"
+    assert rec.resource_id == "OLD123", "D3：不得把 resource_id 置 None 去新建"
+    assert "不新建" in (rec.last_error or "")
+
+
+def test_D3_forbidden_resource_does_not_reprovision(tmp_path):
+    from tools.publish_hsk import PublishRecord, StateStore, PublishState, FAILED
+    store = StateStore(str(tmp_path))
+    store.save(PublishRecord(domain="etf", resource_id="OLD9", url="https://old.gicp.fun"))
+    calls = []
+
+    def push(fp, rid):
+        calls.append(rid)
+        return "403 forbidden"
+
+    st = PublishState(domain="etf", store=store, sleep=lambda s: None, log=lambda *a, **k: None)
+    rec = st.run(content="<html>data_date=2026-09-12 b</html>", data_date="2026-09-12",
+                 push=push, verify=lambda u, f: True)
+    assert rec.state == FAILED and calls == ["OLD9"]

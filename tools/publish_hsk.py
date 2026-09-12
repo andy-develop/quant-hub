@@ -248,14 +248,18 @@ class PublishState:
             rec.last_error = out[:500]
 
             if kind in ("disabled_resource", "forbidden"):
-                # ★ 规则 2：资源被禁用 -> 换新资源。绝不在旧资源上死循环。
-                self.log(f"[{self.domain}] 资源 {rec.resource_id} 不可更新"
-                         f"（{kind}），转新建")
+                # ★ D3（方案 §6.1「要删掉的东西」/ §10.1 已拍板）：资源更新被平台禁用 ->
+                #   best-effort 跳过，**绝不新建第二个资源**。旧实现在这里 rec.resource_id=None; continue
+                #   去新建，正是 ETF 域 URL 每天变（945q5w→i48ya3→73f9qb）的成因，按 D3 移除。
                 rid = _parse_resource_id(out)
                 if rid and rid not in rec.created_resources:
-                    rec.created_resources.append(rid)
-                rec.resource_id = None          # 下轮走"新建"
-                continue
+                    rec.created_resources.append(rid)        # 仅留档审计，不据此新建
+                rec.state = FAILED
+                rec.last_error = (f"D3: 资源 {rec.resource_id} 更新被拒（{kind}）—— "
+                                  f"best-effort 跳过，不新建第二个资源（Pages 才是主通道）")
+                self.store.save(rec)
+                self.log(f"[{self.domain}] {rec.last_error}")
+                return rec
 
             if kind == "auth":
                 rec.state = FAILED
