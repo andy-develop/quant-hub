@@ -1,0 +1,9 @@
+{
+  "domain": "data-retention",
+  "run_date": "2026-09-13",
+  "trigger": "schedule",
+  "stages": {
+    "retention": "== retention dry-run ==\n  stock/hfq: 无过期分区（数据在窗口内）\n  stock/raw: 无过期分区（数据在窗口内）\n  etf/hfq: 无过期分区（数据在窗口内）\n  etf/raw: 无过期分区（数据在窗口内）\n  index: 不过期（RETENTION=None）\n\n体积报告（data/ 各子目录 MB）：{}\n  合计 0 MB（门禁 ≤250MB）\n"
+  },
+  "updated_at": "2026-09-13T05:06:15+08:00"
+}
