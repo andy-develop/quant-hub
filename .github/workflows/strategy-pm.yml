@@ -1,0 +1,77 @@
+name: strategy-pm
+
+# 短线/个性化策略链路（盘后，方案 §4.2 strategy-pm / §13.2）。
+# 短线：检出 quant-lab（已 commit data/kline + 部分 data/meta）→ 离线跑 signals+engine+build_report
+#       → 抽 MODES/MODES_BB → state/payload；不联网抓取（抓取是数据链路职责）。
+# 完成后 dispatch build-publish 组装发布。
+#
+# 个性化(selected) 的真实数据由 build-publish 的 Day-1 转发(stock-factor data/) 提供，本链路不重复。
+
+on:
+  schedule:
+    - cron: '5 9 * * 1-5'        # 北京 17:05 盘后（数据链 16:30→verify 之后）
+  repository_dispatch:            # 数据链 verify 成功后唤醒
+  workflow_dispatch:
+    inputs:
+      skip_blackbox:
+        description: '跳过 LightGBM 黑盒（省时）'
+        type: boolean
+        default: false
+
+concurrency:
+  group: state-commit             # 代码仓 state 提交单独一组，排队不取消（§4.5）
+  cancel-in-progress: false
+
+permissions:
+  contents: write                 # 提交 state/payload
+  actions: write                  # dispatch build-publish
+
+jobs:
+  shortterm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90           # 与 quant-lab daily 同量级（全量回测）
+    steps:
+      - uses: actions/checkout@v4   # quant-hub 自身（common/ + tools/ + state/）
+
+      - name: 检出 quant-lab（含 data/kline ~280MB + data/meta 已 commit 件）
+        uses: actions/checkout@v4
+        with:
+          repository: andy-develop/quant-lab
+          path: src/quant-lab
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'    # quant-lab 生产版本（pandas==3.0.5 / numpy==2.5.2）
+
+      - name: 安装 quant-lab 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r src/quant-lab/requirements.txt
+
+      - name: 跑短线计算链 → 抽 payload
+        run: |
+          ARGS="--qlab src/quant-lab --out state/payload"
+          [ "${{ github.event.inputs.skip_blackbox }}" = "true" ] && ARGS="$ARGS --skip-blackbox"
+          python -m tools.run_shortterm $ARGS
+
+      - name: 提交 state/payload（carry-forward 留档）
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/payload
+          if git diff --cached --quiet; then
+            echo "短线 payload 无变化，跳过提交"
+          else
+            git commit -m "strategy(shortterm): 自产 payload $(date -u +'%F %H:%M') UTC [run ${{ github.run_number }}]"
+            git pull --rebase --autostash || true
+            git push
+          fi
+
+      - name: 唤醒 build-publish 组装发布
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/workflows/build-publish.yml/dispatches \
+            -X POST -f ref=main || echo "::warning::dispatch build-publish 失败（其 schedule 仍会发）"
