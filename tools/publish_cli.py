@@ -83,6 +83,8 @@ def decide(content: str, *, resource_id: str | None, api_key: str | None,
                 "detail": str(e)[:200]}
     new_id = _parse_field(out, "resource_id") or _parse_field(out, "id")
     url = _parse_field(out, "public_url") or _parse_field(out, "url")
+    if url and "?" in url:
+        url = url.split("?", 1)[0]      # 去掉 ?verify_code=...，留干净公网地址
     vcode = _parse_field(out, "verify_code")
     if not new_id:
         return {"action": "skipped", "reason": "create-no-id", "raw": (out or "")[:200]}
@@ -143,7 +145,7 @@ def make_bind(content_path_holder):
         if not verify_code:
             return ""
         return _run_cli(["hsk-cli", "file-hosting-bind", "--resource-id", str(resource_id),
-                         "--verify-code", str(verify_code)])
+                         "--verify_code", str(verify_code)])
     return bind
 
 
@@ -164,10 +166,26 @@ def load_resource_id(resource_file: str, env_override: str | None) -> str | None
     return None
 
 
-def save_resource_id(resource_file: str, resource_id: str, url: str | None) -> None:
+def load_resource_obj(resource_file: str) -> dict:
+    if resource_file and os.path.exists(resource_file):
+        try:
+            with open(resource_file, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:  # noqa: BLE001
+            return {}
+    return {}
+
+
+def save_resource_id(resource_file: str, resource_id: str, url: str | None,
+                     verify_code: str | None = None, bound: bool | None = None) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(resource_file)) or ".", exist_ok=True)
-    obj = {"resource_id": str(resource_id), "public_url": url,
-           "note": "D3：首次成功创建后记住，之后只 update 这一个，失败绝不新建"}
+    obj = load_resource_obj(resource_file)        # 保留已有字段（如 verify_code/bound）
+    obj.update({"resource_id": str(resource_id), "public_url": url,
+                "note": "D3：首次成功创建后记住，之后只 update 这一个，失败绝不新建"})
+    if verify_code is not None:
+        obj["verify_code"] = str(verify_code)
+    if bound is not None:
+        obj["bound"] = bool(bound)
     tmp = resource_file + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
@@ -217,18 +235,30 @@ def main(argv=None) -> int:
     res["domain"] = args.domain
 
     if res["action"] == "create" and res.get("resource_id"):
-        # 首次创建后 best-effort 认领（claimed:false / verify_code 1050 是正常待确认，不算失败）
-        try:
-            bout = make_bind(holder)(res["resource_id"], res.get("verify_code"))
-            print(f"[i] HSK bind: {(bout or '').strip()[:120] or 'no verify_code / 已认领'}")
-        except Exception as e:  # noqa: BLE001
-            print(f"[i] HSK bind 跳过（不影响发布）：{str(e)[:120]}")
-        save_resource_id(args.resource_file, res["resource_id"], res.get("url"))
+        save_resource_id(args.resource_file, res["resource_id"], res.get("url"),
+                         verify_code=res.get("verify_code"), bound=False)
         print(f"[✓] HSK 首次创建资源并记住: {res['resource_id']} -> {res.get('url')}")
     elif res["action"] == "update":
         print(f"[✓] HSK update 成功: {res['resource_id']}")
     else:
         print(f"[i] HSK {res['action']}: {res.get('reason')}（best-effort，不影响 Pages）")
+
+    # 自愈认领：只要存了 verify_code 且尚未 bound，就尝试认领一次（覆盖"已创建未认领"的资源）
+    robj = load_resource_obj(args.resource_file)
+    if robj.get("resource_id") and robj.get("verify_code") and not robj.get("bound"):
+        try:
+            bout = make_bind(holder)(robj["resource_id"], robj.get("verify_code"))
+            low = (bout or "").lower()
+            ok = ("success" in low or "ok" in low or "bound" in low or "已认领" in (bout or "")
+                  or "error" not in low)
+            if ok:
+                save_resource_id(args.resource_file, robj["resource_id"], robj.get("public_url"),
+                                 bound=True)
+                print(f"[✓] HSK 认领成功（bound）：{robj['resource_id']}")
+            else:
+                print(f"[i] HSK 认领未完成（best-effort，下次重试）：{(bout or '').strip()[:120]}")
+        except Exception as e:  # noqa: BLE001
+            print(f"[i] HSK 认领跳过（不影响发布）：{str(e)[:120]}")
 
     if res.get("fingerprint"):
         save_state(state_file, res)
