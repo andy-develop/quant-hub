@@ -54,6 +54,8 @@ def _release_archive_exists() -> bool:
 
 def _size_report() -> dict:
     data = _data_root()
+    if not data.exists():      # CI 中数据仓可能未挂载（QH_DATA_ROOT 在数据链路侧）
+        return {}
     report = {}
     for sub in sorted(p for p in data.iterdir() if p.is_dir()):
         report[sub.name] = round(_dir_size_mb(data / sub.name), 2)
