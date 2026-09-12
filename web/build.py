@@ -67,39 +67,30 @@ def inject_payloads(fragment: str, domain: str,
                     envelopes: dict[str, dict] | None = None) -> str:
     """把统一信封的数据写回某个域的 HTML 片段。
 
-    找不到对应数据时**保持原占位符不动**（页面会显示"数据加载失败"级别的
-    空态，但不会崩）—— 比塞一份假数据安全。
+    ★ 无对应数据时也**把占位符替换成合法的空值**（{} / []），而不是原样留着 ——
+    留着 `__DATA__` 会让前端 `const MODES = __DATA__;` 抛 ReferenceError、整域脚本崩、页面空白。
+    替换成空值后该域走模板自带的空态，不崩、也不塞假数据。
 
     envelopes : {(domain, variant): envelope}
     """
-    if not envelopes:
-        return fragment
+    envelopes = envelopes or {}
     if domain == "quant-lab":
         m = envelopes.get(("quant-lab", "momentum"))
         bb = envelopes.get(("quant-lab", "blackbox"))
-        if m is not None:
-            fragment = fragment.replace(
-                "const MODES = __DATA__;",
-                "const MODES = " + json.dumps(m.get("payload", {}), ensure_ascii=False) + ";")
-        if bb is not None:
-            fragment = fragment.replace(
-                "const MODES_BB = __DATA_BB__;",
-                "const MODES_BB = " + json.dumps(bb.get("payload", {}), ensure_ascii=False) + ";")
-        # 兼容 render_html 在服务端就替换掉的写法
-        if m is not None:
-            fragment = fragment.replace("__DATA__",
-                                        json.dumps(m.get("payload", {}), ensure_ascii=False))
-        if bb is not None:
-            fragment = fragment.replace("__DATA_BB__",
-                                        json.dumps(bb.get("payload", {}), ensure_ascii=False))
+        # ★ 即便无数据也必须把占位符替换成合法 JS（{}）：否则 `const MODES = __DATA__;`
+        #   抛 ReferenceError 让短线域脚本整体崩溃、页面空白（合并页默认落该域时即"完全没数据"）
+        mval = json.dumps(m.get("payload", {}) if m else {}, ensure_ascii=False)
+        bbval = json.dumps(bb.get("payload", {}) if bb else {}, ensure_ascii=False)
+        fragment = fragment.replace("const MODES = __DATA__;", "const MODES = " + mval + ";")
+        fragment = fragment.replace("const MODES_BB = __DATA_BB__;", "const MODES_BB = " + bbval + ";")
+        fragment = fragment.replace("__DATA_BB__", bbval)   # 兜底裸占位（先 BB 再 DATA，避免前缀误伤）
+        fragment = fragment.replace("__DATA__", mval)
         return fragment
 
     if domain == "etf":
         div = envelopes.get(("etf", "dividend"))
         sec = envelopes.get(("etf", "sector"))
         hs = envelopes.get(("etf", "hs300"))
-        if div is None and sec is None and hs is None:
-            return fragment
         merged: dict = {}
         if div is not None:
             merged.update(div.get("payload") or {})
@@ -107,18 +98,19 @@ def inject_payloads(fragment: str, domain: str,
             merged["sector"] = sec.get("payload")
         if hs is not None:
             merged["hs300"] = hs.get("payload")
-        blob = json.dumps(merged, ensure_ascii=False)
-        # 模板里 PAYLOAD 块初始是 __PAYLOAD__
+        blob = json.dumps(merged, ensure_ascii=False)       # 无数据时为 "{}"，仍是合法 JSON
+        # 整块替换 PAYLOAD（绝不留 __PAYLOAD__ 让前端 JSON.parse 崩）
         fragment = re.sub(
             r'(<script id="PAYLOAD" type="application/json">).*?(</script>)',
             lambda mm: mm.group(1) + blob + mm.group(2),
             fragment, count=1, flags=re.S)
+        fragment = fragment.replace("__PAYLOAD__", blob)
         return fragment
 
     if domain == "stock":
         sc = envelopes.get(("stock", "screen"))
         if sc is None:
-            return fragment
+            return fragment        # /*__STOCK_UNIVERSE__*/[] 本身是合法空数组，不替换也不崩
         pl = sc.get("payload") or {}
         stocks = pl.get("stocks", [])
         factors = pl.get("factors", {})
@@ -199,6 +191,7 @@ SHELL_JS = """
 (function(){
   "use strict";
   var DOMAINS = __DOMAINS__;
+  var DEFAULT = "__DEFAULT__";
   function show(dom, push){
     DOMAINS.forEach(function(d){
       var el = document.getElementById("qh-domain-" + d);
@@ -213,7 +206,9 @@ SHELL_JS = """
   window.qhShow = show;
   document.addEventListener("DOMContentLoaded", function(){
     var h = (location.hash || "").replace("#", "");
-    show(DOMAINS.indexOf(h) >= 0 ? h : DOMAINS[0], false);
+    var init = DOMAINS.indexOf(h) >= 0 ? h
+             : (DOMAINS.indexOf(DEFAULT) >= 0 ? DEFAULT : DOMAINS[0]);
+    show(init, false);
     Array.prototype.forEach.call(document.querySelectorAll(".qh-tab"), function(b){
       b.addEventListener("click", function(){ show(b.getAttribute("data-domain")); });
     });
@@ -304,14 +299,29 @@ def build(src_root: str, out_path: str, *, health: dict | None = None,
             + frags[key] + "\n</section>"
         )
 
-    html = _assemble(body=body, head_assets=head_assets, health=health or {})
+    # 默认落在"第一个有真实数据"的域，避免一开页就是空的短线域（用户会以为"完全没数据"）
+    def _has_data(dom: str) -> bool:
+        for (d, _v), e in envelopes.items():
+            if d != dom:
+                continue
+            pl = e.get("payload")
+            if isinstance(pl, dict) and any(pl.values()):
+                return True
+            if isinstance(pl, list) and pl:
+                return True
+        return False
+
+    default_domain = next((d for d in DOMAINS if _has_data(d)), DOMAINS[0])
+    html = _assemble(body=body, head_assets=head_assets, health=health or {},
+                     default_domain=default_domain)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
     return html
 
 
-def _assemble(*, body: list[str], head_assets: str, health: dict) -> str:
+def _assemble(*, body: list[str], head_assets: str, health: dict,
+              default_domain: str = "quant-lab") -> str:
     tabs = "\n".join(
         f'  <button class="qh-tab" id="qh-tab-{k}" data-domain="{k}">{t}'
         f'<span class="qh-note">{n}</span></button>'
@@ -352,7 +362,7 @@ def _assemble(*, body: list[str], head_assets: str, health: dict) -> str:
   <div>本页为静态快照，不构成投资建议。涨跌颜色沿用各域原有约定（个性化选股为绿涨红跌）。</div>
 </footer>
 <script>
-{SHELL_JS.replace("__DOMAINS__", repr(DOMAINS))}
+{SHELL_JS.replace("__DOMAINS__", repr(DOMAINS)).replace("__DEFAULT__", default_domain)}
 </script>
 </body>
 </html>
