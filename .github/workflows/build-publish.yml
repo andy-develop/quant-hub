@@ -34,6 +34,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Day-1 转发（§7.1）：从老仓**已 commit 的产物**抽真实 payload，零改动老仓、零联网
+      - name: 检出 red-dividend-strategy（index.html 内含真实 ETF PAYLOAD）
+        uses: actions/checkout@v4
+        with:
+          repository: andy-develop/red-dividend-strategy
+          path: src/red-dividend-strategy
+      - name: 检出 stock-factor-engine（data/stocks.json 真实 5180 只）
+        uses: actions/checkout@v4
+        with:
+          repository: andy-develop/stock-factor-engine
+          path: src/stock-factor-engine
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -44,8 +56,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r common/requirements.txt
 
-      - name: 自产 payload（缺数据的域保留上次信封 = carry-forward）
-        run: python -m tools.build_payloads --repo-root . --out state/payload
+      - name: payload —— 自产兜底 + Day-1 转发(老仓产物，权威)；缺的域保留上次信封(carry-forward)
+        run: |
+          python -m tools.build_payloads --repo-root . --out state/payload || true
+          python -m tools.forward_payloads --src src --out state/payload || echo "::warning::转发部分失败，沿用已有 state/payload"
 
       - name: 构建单页壳（自包含 + 注入 payload）
         run: |

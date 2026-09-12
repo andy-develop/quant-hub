@@ -160,6 +160,55 @@ def diff(shadow_dir: str, legacy_dir: str, *, tol: float = 1e-9,
     return {"tolerance": tol, "by_variant": out, "by_domain": by_domain}
 
 
+# ---------------------------------------------------------------------------
+# Phase-4 自动晋级台账：连续 N 个交易日 PROMOTE-READY 才把某域 shadow→primary
+# ---------------------------------------------------------------------------
+def update_promotion(ledger_path: str, by_domain: dict, trading_day: str,
+                     threshold: int = 3) -> dict:
+    """推进每域的晋级计数（方案 §7.2 Phase-4：连续 3 个交易日逐位一致才晋级）。
+
+    - PROMOTE-READY：consecutive +1（同一 trading_day 重复跑不重复计数，幂等）
+    - 其它 verdict（BLOCKED/NOT-STARTED/MISSING）：consecutive 归零（不带病晋级）
+    - consecutive >= threshold：promoted=true（上层据此把 payload_source 由 shadow 转 primary）
+    台账入 git，可审计、可回滚。
+    """
+    ledger = {}
+    if ledger_path and os.path.exists(ledger_path):
+        try:
+            with open(ledger_path, encoding="utf-8") as f:
+                ledger = json.load(f)
+        except Exception:  # noqa: BLE001
+            ledger = {}
+
+    for dom, v in by_domain.items():
+        st = ledger.get(dom, {"consecutive": 0, "promoted": False,
+                              "last_day": None, "history": []})
+        verdict = v.get("verdict")
+        if st.get("last_day") == trading_day:
+            # 同一交易日已记过：只更新 verdict 展示，不重复 +/- 计数
+            st["last_verdict"] = verdict
+        else:
+            if verdict == "PROMOTE-READY":
+                st["consecutive"] = int(st.get("consecutive", 0)) + 1
+            else:
+                st["consecutive"] = 0
+            st["promoted"] = st["consecutive"] >= threshold
+            st["last_day"] = trading_day
+            st["last_verdict"] = verdict
+            st.setdefault("history", []).append(
+                {"day": trading_day, "verdict": verdict, "consecutive": st["consecutive"]})
+            st["history"] = st["history"][-30:]      # 只留最近 30 条
+        ledger[dom] = st
+
+    if ledger_path:
+        os.makedirs(os.path.dirname(os.path.abspath(ledger_path)) or ".", exist_ok=True)
+        tmp = ledger_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(ledger, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, ledger_path)
+    return ledger
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="影子并行逐位比对（§7.3）")
     ap.add_argument("--shadow", required=True, help="新链路自产 payload 目录")
@@ -167,6 +216,9 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=None, help="结果写 runlog（JSON）")
     ap.add_argument("--tol", type=float, default=1e-9)
     ap.add_argument("--strict", action="store_true", help="任一域 BLOCKED 则退出码非 0")
+    ap.add_argument("--ledger", default=None, help="晋级台账 JSON（连续 N 交易日 PROMOTE-READY 自动晋级）")
+    ap.add_argument("--trading-day", default=None, help="本次比对对应的交易日 YYYY-MM-DD（台账计数用）")
+    ap.add_argument("--threshold", type=int, default=3, help="晋级所需连续交易日数（默认 3）")
     args = ap.parse_args(argv)
 
     res = diff(args.shadow, args.legacy, tol=args.tol)
@@ -176,6 +228,11 @@ def main(argv=None) -> int:
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(res, f, ensure_ascii=False, indent=2)
         print(f"[i] 写入 {args.out}")
+    if args.ledger and args.trading_day:
+        led = update_promotion(args.ledger, res["by_domain"], args.trading_day, args.threshold)
+        for dom, st in led.items():
+            flag = "✓ PROMOTED" if st.get("promoted") else f"{st.get('consecutive',0)}/{args.threshold}"
+            print(f"[promotion] {dom}: {flag} (last={st.get('last_verdict')})")
     if args.strict:
         blocked = [d for d, v in res["by_domain"].items() if v["verdict"] == "BLOCKED"]
         if blocked:

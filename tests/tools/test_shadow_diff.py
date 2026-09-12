@@ -101,3 +101,21 @@ def test_strict_exit_code(tmp_path):
     rc = SD.main(["--shadow", str(sh), "--legacy", str(lg), "--out", str(out), "--strict"])
     assert rc == 1
     assert json.loads(out.read_text(encoding="utf-8"))["by_domain"]["etf"]["verdict"] == "BLOCKED"
+
+
+def test_promotion_ledger_counts_and_resets(tmp_path):
+    led = str(tmp_path / "promotion.json")
+    bd_ready = {"etf": {"verdict": "PROMOTE-READY"}}
+    # 连续两个交易日 READY -> 2/3，未晋级
+    SD.update_promotion(led, bd_ready, "2026-09-09", threshold=3)
+    st = SD.update_promotion(led, bd_ready, "2026-09-10", threshold=3)
+    assert st["etf"]["consecutive"] == 2 and st["etf"]["promoted"] is False
+    # 同一交易日重复跑不重复计数（幂等）
+    st = SD.update_promotion(led, bd_ready, "2026-09-10", threshold=3)
+    assert st["etf"]["consecutive"] == 2
+    # 第三个交易日 READY -> 晋级
+    st = SD.update_promotion(led, bd_ready, "2026-09-11", threshold=3)
+    assert st["etf"]["consecutive"] == 3 and st["etf"]["promoted"] is True
+    # 之后某天 BLOCKED -> 归零、取消晋级（不带病）
+    st = SD.update_promotion(led, {"etf": {"verdict": "BLOCKED"}}, "2026-09-12", threshold=3)
+    assert st["etf"]["consecutive"] == 0 and st["etf"]["promoted"] is False
