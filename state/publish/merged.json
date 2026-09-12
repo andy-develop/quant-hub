@@ -1,8 +1,7 @@
 {
-  "action": "create",
-  "resource_id": "1789175513578218887",
-  "url": "https://sfj4my.gicp.fun?verify_code=1121",
-  "verify_code": "1121",
-  "fingerprint": "2016-09-08#2d3cfeed918ddf33",
+  "action": "skipped",
+  "reason": "push-disabled_resource",
+  "fingerprint": "2016-09-08#a2f45c1700c299e1",
+  "note": "D3：失败即跳过，绝不新建第二个资源",
   "domain": "merged"
 }
