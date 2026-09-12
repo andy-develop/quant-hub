@@ -55,15 +55,29 @@ jobs:
           [ "${{ github.event.inputs.skip_blackbox }}" = "true" ] && ARGS="$ARGS --skip-blackbox"
           python -m tools.run_shortterm $ARGS
 
-      - name: 提交 state/payload（carry-forward 留档）
+      - name: 写 runlog（§3.1，供 repo-health 巡检）
+        run: |
+          python3 - <<'EOF'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, ".")
+          from tools.runlog import write_runlog
+          files = sorted(Path("state/payload").glob("quant-lab.*.json"))
+          write_runlog(Path("state"), "shortterm",
+                       stages={"strategy_pm": "ok", "payload_files": len(files)},
+                       trigger="schedule")
+          print(f"runlog: shortterm（{len(files)} 个 payload）")
+          EOF
+
+      - name: 提交 state/（payload + runlog，carry-forward 留档）
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state/payload
+          git add state/
           if git diff --cached --quiet; then
-            echo "短线 payload 无变化，跳过提交"
+            echo "短线 state 无变化，跳过提交"
           else
-            git commit -m "strategy(shortterm): 自产 payload $(date -u +'%F %H:%M') UTC [run ${{ github.run_number }}]"
+            git commit -m "strategy(shortterm): 自产 payload + runlog $(date -u +'%F %H:%M') UTC [run ${{ github.run_number }}]"
             git pull --rebase --autostash || true
             git push
           fi

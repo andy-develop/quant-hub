@@ -209,6 +209,93 @@ def update_promotion(ledger_path: str, by_domain: dict, trading_day: str,
     return ledger
 
 
+# ---------------------------------------------------------------------------
+# Phase-6 AUTO-KPI 提取（供 tools/check_docs.py 渲染/校验 README 锚点）
+# 返回顺序与 check_docs._DOC_NAMES 严格对应（缺失的 variant 补 0.0，如实占位）
+# ---------------------------------------------------------------------------
+def _series_sharpe(eq: list[float]) -> float:
+    """日净值序列 -> 年化夏普（252 交易日）。"""
+    if len(eq) < 3:
+        return 0.0
+    daily = [eq[i] / eq[i - 1] - 1.0 for i in range(1, len(eq))]
+    n = len(daily)
+    mean = sum(daily) / n
+    var = sum((d - mean) ** 2 for d in daily) / (n - 1)
+    if var <= 0:
+        return 0.0
+    return (mean / (var ** 0.5)) * (252 ** 0.5)
+
+
+def _max_drawdown(eq: list[float]) -> float:
+    peak, mdd = eq[0] if eq else 0.0, 0.0
+    for v in eq:
+        peak = max(peak, v)
+        mdd = min(mdd, v / peak - 1.0 if peak else 0.0)
+    return mdd
+
+
+def _shortterm_line_kpis(node: dict) -> list[float]:
+    """quant-lab 单条策略线（on/off）6 项：收益/回撤/夏普/笔数/胜率/最后权益。"""
+    eq = [float(v) for v in (node.get("equity") or [])]
+    trades = node.get("trades") or []
+    if len(eq) < 2:
+        return [0.0] * 6
+    ret = eq[-1] / eq[0] - 1.0
+    mdd = _max_drawdown(eq)
+    sharpe = _series_sharpe(eq)
+    n_trades = len(trades)
+    wins = sum(1 for t in trades if (t.get("pnl_pct") or 0) > 0)
+    win_rate = wins / n_trades if n_trades else 0.0
+    return [ret, mdd, sharpe, float(n_trades), win_rate, float(eq[-1])]
+
+
+def extract_kpis(domain: str, payloads) -> list[float]:
+    """从统一信封列表提取确定顺序的 KPI 数值（供 README AUTO-KPI 渲染与 CI 校验）。
+
+    payloads: list[envelope]（state/payload/{domain}.{variant}.json 的 JSON 对象）
+    顺序与 check_docs._DOC_NAMES 严格对应：
+      - shortterm: momentum.on/off + blackbox.on/off 各 6 项 = 24
+      - etf: dividend 8 项 + sector 5 项 + hs300 5 项 = 18
+      - selected: []（无基线）
+    """
+    by = {(env.get("domain"), env.get("variant")): env for env in (payloads or [])}
+
+    if domain == "shortterm":
+        out = []
+        for variant in ("momentum", "blackbox"):
+            env = by.get(("quant-lab", variant))
+            y3 = (env.get("payload") or {}).get("y3") if env else None
+            for line in ("on", "off"):
+                node = (y3 or {}).get(line)
+                out += _shortterm_line_kpis(node) if node else [0.0] * 6
+        return out
+
+    if domain == "etf":
+        def metrics(variant: str) -> dict | None:
+            env = by.get(("etf", variant))
+            if not env:
+                return None
+            p = env.get("payload") or {}
+            if variant == "sector":
+                return p.get("metrics")
+            return (p.get("backtest") or {}).get("metrics")
+
+        out = []
+        d = metrics("dividend") or {}
+        out += [d.get("total", 0.0), d.get("ann", 0.0), d.get("sharpe", 0.0),
+                d.get("mdd", 0.0), float(d.get("n_trades", 0)),
+                d.get("total_bh", 0.0), d.get("sharpe_bh", 0.0), d.get("mdd_bh", 0.0)]
+        s = metrics("sector") or {}
+        out += [s.get("total", 0.0), s.get("cagr", 0.0), s.get("sharpe", 0.0),
+                s.get("mdd", 0.0), float(s.get("n_trades", 0))]
+        h = metrics("hs300") or {}
+        out += [h.get("total", 0.0), h.get("ann", 0.0), h.get("sharpe", 0.0),
+                h.get("mdd", 0.0), float(h.get("n_trades", 0))]
+        return out
+
+    return []  # selected 无基线
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="影子并行逐位比对（§7.3）")
     ap.add_argument("--shadow", required=True, help="新链路自产 payload 目录")

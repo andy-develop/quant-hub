@@ -1,0 +1,15 @@
+{
+  "run_date": "2026-09-12",
+  "issues": [
+    "[shortterm] runlog 不足 5 份（0）—— 链路可能未持续跑",
+    "[etf] runlog 不足 5 份（0）—— 链路可能未持续跑",
+    "[selected] runlog 不足 5 份（0）—— 链路可能未持续跑"
+  ],
+  "payload_size_kb": {
+    "shortterm": 648.208984375,
+    "etf": 172.5654296875,
+    "selected": 219.8701171875
+  },
+  "data_worktree_mb": 236.7,
+  "healthy": false
+}

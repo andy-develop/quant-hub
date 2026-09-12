@@ -1,0 +1,67 @@
+name: repo-health
+
+# §10.4 周巡检（Phase 6）：每周一 09:00 CST 读三域 + 数据链路 runlog。
+# 任何"最近 5 交易日有缺失/失败/未发布/覆盖率<90%"或数据仓超体积 → 开 issue。
+# 已有未关闭告警 issue 不重复创建（去重：按 title 前缀匹配）。
+
+on:
+  schedule:
+    - cron: "1 1 * * 1"   # 周一 09:01 CST = 01:01 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: repo-health
+  cancel-in-progress: false
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          lfs: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 运行健康巡检
+        id: health
+        run: |
+          python3 tools/repo_health.py | tee /tmp/health.txt
+          # ★ 匹配 "healthy": true 才是健康（"healthy": false 也含 "healthy" 子串，不能只 grep 词）
+          if grep -q '"healthy": *true' /tmp/health.txt; then
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 开告警 issue（去重：已有未关闭同题 issue 不重复）
+        if: always() && steps.health.outcome != 'skipped'
+        run: |
+          # ★ 逐文件读最新一份 repo-health json（cat 拼接多份会让 json.load 崩）
+          REPORT=$(python3 - <<'EOF'
+          import json, glob
+          files = sorted(glob.glob("state/data/repo-health/*.json"))
+          if not files:
+              raise SystemExit(0)
+          with open(files[-1], encoding="utf-8") as f:
+              d = json.load(f)
+          print("\n".join(d.get("issues", [])))
+          EOF
+          )
+          if [ -z "$REPORT" ]; then
+            echo "无问题，跳过开 issue"
+            exit 0
+          fi
+          TITLE="repo-health 周巡检告警 $(date +%F)"
+          # 去重：已存在未关闭的相同前缀 issue 则只更新不新建
+          EXISTING=$(gh issue list --state open --limit 50 | grep -c "repo-health 周巡检告警" || true)
+          if [ "$EXISTING" -ge 1 ]; then
+            echo "已有未关闭的 repo-health 告警 issue（$EXISTING 个），跳过新建"
+            exit 0
+          fi
+          gh issue create --title "$TITLE" --body "## repo-health 周巡检\n\n$REPORT\n\n<sub>由 \`repo-health.yml\` 自动生成；修复后请手动关闭本 issue。</sub>"

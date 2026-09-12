@@ -61,6 +61,13 @@ jobs:
           python -m tools.build_payloads --repo-root . --out state/payload || true
           python -m tools.forward_payloads --src src --out state/payload || echo "::warning::转发部分失败，沿用已有 state/payload"
 
+      - name: AUTO-KPI 校验（README 数字与 payload 一致，Phase 6 门禁；失败仅告警不阻塞发布）
+        continue-on-error: true
+        run: |
+          if ! python -m tools.check_docs --check-only; then
+            echo "::warning::AUTO-KPI 与 payload 不一致 → 需跑 tools/check_docs.py 刷新 README 后提交"
+          fi
+
       - name: 构建单页壳（自包含 + 注入 payload）
         run: |
           mkdir -p dist
@@ -111,6 +118,22 @@ jobs:
           mkdir -p ~/.hsk
           printf '{"api_key":"%s","scene":"file_hosting"}' "$HSK_API_KEY" > ~/.hsk/api_key.json
           python -m tools.publish_cli --content dist/index.html --domain merged --resource-file state/data/hsk-resource.json --state state/publish
+
+      - name: 写发布链路 runlog（§3.1，供 repo-health 巡检）
+        run: |
+          python3 - <<'EOF'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, ".")
+          from tools.runlog import write_runlog
+          etf = sorted(Path("state/payload").glob("etf.*.json"))
+          sel = sorted(Path("state/payload").glob("stock.*.json"))
+          write_runlog(Path("state"), "etf",
+                       stages={"forward_etf": len(etf)}, trigger="publish")
+          write_runlog(Path("state"), "selected",
+                       stages={"forward_selected": len(sel)}, trigger="publish")
+          print(f"runlog: etf({len(etf)}) / selected({len(sel)})")
+          EOF
 
       - name: 提交 payload / 发布记录（carry-forward 留档 + 资源 ID 持久化）
         run: |
