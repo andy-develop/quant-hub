@@ -233,16 +233,16 @@ def _load_derived(
     asset, fq, freq, codes, start, end, last_n, want_cols,
     closed_only, root, group, calendar, strict, pd,
 ):
-    if asset != "index":
-        # stock/etf 的周月线按需由上层自行聚合；只有 index 物化入库（方案 §2.7）
+    if asset not in ("index", "etf"):
+        # stock 的周月线按需由上层自行聚合；只有 index/etf 物化入库（方案 §2.7）
         raise StoreError(
-            f"derived freq={freq!r} is materialized only for asset='index'; "
+            f"derived freq={freq!r} is materialized only for asset in ('index','etf'); "
             f"for asset={asset!r} aggregate from daily via common.aggregate"
         )
     if fq not in ("raw", "hfq"):
-        raise StoreError(f"index derived freq requires fq in ('raw','hfq'), got {fq!r}")
+        raise StoreError(f"derived freq requires fq in ('raw','hfq'), got {fq!r}")
 
-    base = os.path.join(root, "market", "index")
+    base = os.path.join(root, "market", asset)
     subdirs = _index_subdirs(base, group)
     frames = []
     for sub in subdirs:
