@@ -121,6 +121,8 @@ jobs:
             echo "无状态变化，跳过提交"
           else
             git commit -m "publish: 合并页 $(date -u +'%F %H:%M') UTC [run ${{ github.run_number }}]"
-            git pull --rebase --autostash || true
-            git push
+            # state/payload 每次重生成（generated_at 不同）；并发/紧邻 run 用 merge -X ours
+            # 让"本次重生成的 payload"胜出，避免 rebase 冲突把 job 判红（payload 是可重算的留档，非真相源）
+            git pull --no-rebase --no-edit -X ours origin main || true
+            git push || { git pull --no-rebase --no-edit -X ours origin main && git push; }
           fi

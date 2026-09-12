@@ -68,10 +68,5 @@ jobs:
             git push
           fi
 
-      - name: 唤醒 build-publish 组装发布
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/${{ github.repository }}/actions/workflows/build-publish.yml/dispatches \
-            -X POST -f ref=main || echo "::warning::dispatch build-publish 失败（其 schedule 仍会发）"
+      # build-publish 由其 workflow_run 触发器在本 workflow 完成后自动唤醒（无需显式 dispatch，
+      # 否则会触发两个 build-publish 并发竞争 state/payload 导致 rebase 冲突）。
