@@ -1,7 +1,7 @@
 {
   "action": "skipped",
   "reason": "push-disabled_resource",
-  "fingerprint": "2016-09-08#a2f45c1700c299e1",
+  "fingerprint": "2026-09-09#d1a82e5d01d846dc",
   "note": "D3：失败即跳过，绝不新建第二个资源",
   "domain": "merged"
 }
