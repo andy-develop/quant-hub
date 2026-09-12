@@ -83,19 +83,25 @@ def decide(content: str, *, resource_id: str | None, api_key: str | None,
                 "detail": str(e)[:200]}
     new_id = _parse_field(out, "resource_id") or _parse_field(out, "id")
     url = _parse_field(out, "public_url") or _parse_field(out, "url")
+    vcode = _parse_field(out, "verify_code")
     if not new_id:
         return {"action": "skipped", "reason": "create-no-id", "raw": (out or "")[:200]}
-    return {"action": "create", "resource_id": new_id, "url": url, "fingerprint": fp}
+    return {"action": "create", "resource_id": new_id, "url": url,
+            "verify_code": vcode, "fingerprint": fp}
 
 
 def _parse_field(text: str, key: str):
     if not text:
         return None
-    # 先试 JSON
+    # 先试 JSON（hsk-cli --format json 字段可能在顶层或 data 下）
     try:
         obj = json.loads(text)
-        if isinstance(obj, dict) and key in obj:
-            return str(obj[key])
+        if isinstance(obj, dict):
+            if key in obj:
+                return str(obj[key])
+            data = obj.get("data")
+            if isinstance(data, dict) and key in data:
+                return str(data[key])
     except Exception:  # noqa: BLE001
         pass
     # 再试 key=value / "key":"value"
@@ -118,15 +124,27 @@ def _run_cli(args, timeout=120):
 def make_push(content_path_holder):
     def push(resource_id, content):
         path = content_path_holder["path"]
-        return _run_cli(["hsk-cli", "+host", path, "--resource-id", str(resource_id)])
+        # D3：已有资源 -> 只 update 这一个（+host --resource-id），绝不新建
+        return _run_cli(["hsk-cli", "+host", path, "--entry-file", path,
+                         "--resource-id", str(resource_id), "--format", "json"])
     return push
 
 
 def make_create(content_path_holder):
     def create(content):
         path = content_path_holder["path"]
-        return _run_cli(["hsk-cli", "host", path])
+        return _run_cli(["hsk-cli", "host", path, "--entry-file", path, "--format", "json"])
     return create
+
+
+def make_bind(content_path_holder):
+    """首次创建后认领资源（file-hosting-bind），best-effort。"""
+    def bind(resource_id, verify_code):
+        if not verify_code:
+            return ""
+        return _run_cli(["hsk-cli", "file-hosting-bind", "--resource-id", str(resource_id),
+                         "--verify-code", str(verify_code)])
+    return bind
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +217,12 @@ def main(argv=None) -> int:
     res["domain"] = args.domain
 
     if res["action"] == "create" and res.get("resource_id"):
+        # 首次创建后 best-effort 认领（claimed:false / verify_code 1050 是正常待确认，不算失败）
+        try:
+            bout = make_bind(holder)(res["resource_id"], res.get("verify_code"))
+            print(f"[i] HSK bind: {(bout or '').strip()[:120] or 'no verify_code / 已认领'}")
+        except Exception as e:  # noqa: BLE001
+            print(f"[i] HSK bind 跳过（不影响发布）：{str(e)[:120]}")
         save_resource_id(args.resource_file, res["resource_id"], res.get("url"))
         print(f"[✓] HSK 首次创建资源并记住: {res['resource_id']} -> {res.get('url')}")
     elif res["action"] == "update":

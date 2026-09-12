@@ -84,11 +84,18 @@ jobs:
 
       - name: HSK best-effort 镜像（失败即跳过，绝不影响 Pages）
         continue-on-error: true
-        timeout-minutes: 3
+        timeout-minutes: 5
         env:
           HSK_API_KEY: ${{ secrets.HSK_API_KEY }}
           HSK_RESOURCE_ID: ${{ vars.HSK_RESOURCE_ID }}
         run: |
+          if [ -z "$HSK_API_KEY" ]; then
+            echo "[i] 未配置 HSK_API_KEY，跳过 HSK 镜像（Pages 已发布，不受影响）"
+            exit 0
+          fi
+          npm install -g @aweray/hsk-cli >/dev/null 2>&1 || { echo "[i] hsk-cli 安装失败，跳过"; exit 0; }
+          mkdir -p ~/.hsk
+          printf '{"api_key":"%s","scene":"file_hosting"}' "$HSK_API_KEY" > ~/.hsk/api_key.json
           python -m tools.publish_cli --content dist/index.html --domain merged --resource-file state/data/hsk-resource.json --state state/publish
 
       - name: 提交 payload / 发布记录（carry-forward 留档 + 资源 ID 持久化）
