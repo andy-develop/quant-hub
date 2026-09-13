@@ -1,0 +1,41 @@
+{
+  "etf": {
+    "consecutive": 0,
+    "promoted": false,
+    "last_day": "2026-09-11",
+    "history": [
+      {
+        "day": "2026-09-11",
+        "verdict": "NOT-STARTED",
+        "consecutive": 0
+      }
+    ],
+    "last_verdict": "NOT-STARTED"
+  },
+  "quant-lab": {
+    "consecutive": 0,
+    "promoted": false,
+    "last_day": "2026-09-11",
+    "history": [
+      {
+        "day": "2026-09-11",
+        "verdict": "BLOCKED",
+        "consecutive": 0
+      }
+    ],
+    "last_verdict": "BLOCKED"
+  },
+  "stock": {
+    "consecutive": 0,
+    "promoted": false,
+    "last_day": "2026-09-11",
+    "history": [
+      {
+        "day": "2026-09-11",
+        "verdict": "NOT-STARTED",
+        "consecutive": 0
+      }
+    ],
+    "last_verdict": "NOT-STARTED"
+  }
+}
