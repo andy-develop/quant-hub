@@ -45,7 +45,7 @@ DIV_TOLERANCE = 0.005          # 快照昨收 vs 库内上一收盘 偏差容差
 DIV_FUSE_MAX = 50              # 除权股数量保险丝下界（老仓同款 max(50, 0.3*n)）
 COVERAGE_RED = 0.80            # §0.4 覆盖率门禁：<80% 红
 COVERAGE_YELLOW = 0.95         # <95% 黄（记录，不阻断）
-REFETCH_START_DELTA = 4        # 除权修复窗口起点 = 目标日 - 4 年（覆盖库内 730 交易日窗口）
+REFETCH_START_DELTA = 6        # 除权修复窗口起点 = 目标日 - 6 年（覆盖库内 1250 交易日窗口，Q1 保留期 730→1250）
 
 
 def _pd():

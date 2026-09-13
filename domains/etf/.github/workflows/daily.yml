@@ -1,5 +1,10 @@
 name: Daily Update (08:00 CST)
 
+# ★ 合并仓收尾（E-3）：GitHub Actions 只扫描仓库根 .github/workflows/，本文件
+#   位于 domains/etf/.github/workflows/ 下不会被执行（防与根策略/数据链 workflow 双发）。
+#   ETF 域的每日任务由根 .github/workflows/ 下的数据链承担；此文件仅为
+#   「回退为独立仓库」时的保留件，勿在合并仓内依赖它。
+
 on:
   schedule:
     # 北京时间 08:00 = UTC 00:00（GitHub schedule 用 UTC；负载高时可能延迟数分钟或跳过当天，全量抓取设计不丢数据）

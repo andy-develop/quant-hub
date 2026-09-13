@@ -1,5 +1,10 @@
 name: daily-quant
 
+# ★ 合并仓收尾（E-3）：GitHub Actions 只扫描仓库根 .github/workflows/，本文件
+#   位于 domains/shortterm/.github/workflows/ 下不会被执行（防与根 strategy-pm.yml 双发）。
+#   短线的每日盘后任务已由 quant-hub 根 .github/workflows/strategy-pm.yml 统一承担；
+#   此文件仅为「回退为独立仓库」时的保留件，勿在合并仓内依赖它。
+
 # 每周一至周五 北京时间 16:30 (= UTC 08:30) 运行; 可在 Actions 页面手动触发
 # 注: GitHub 定时任务尽力而为, 实测延迟 0.5~5h; 第二档 21:00 补跑兜底
 # (流水线幂等: 快照已存在则跳过K线更新, 仅重建报告, 补跑无副作用)

@@ -17,6 +17,10 @@ on:
         description: '跳过 LightGBM 黑盒（省时）'
         type: boolean
         default: false
+      run_shadow:
+        description: '跑影子链（数据仓 vs legacy 逐位比对 + 晋级台账，默认关）'
+        type: boolean
+        default: false
 
 concurrency:
   group: state-commit             # 代码仓 state 提交单独一组，排队不取消（§4.5）
@@ -116,3 +120,68 @@ jobs:
 
       # build-publish 由其 workflow_run 触发器在本 workflow 完成后自动唤醒（无需显式 dispatch，
       # 否则会触发两个 build-publish 并发竞争 state/payload 导致 rebase 冲突）。
+
+  # ---- 影子链（方案 §7.3，默认关）：同一天同引擎、仅数据源不同 —— 数据仓 vs legacy ----
+  # 主线 payload 已由 shortterm job 提交到 state/payload（legacy 数据源）；
+  # 这里再物化数据仓 → shadow 自产 → shadow_diff 逐位比对 → 晋级台账（连续 3 交易日
+  # PROMOTE-READY 才晋级，§7.2 Phase-4）。独立 job：shadow 失败/BLOCKED 绝不阻塞主线。
+  shortterm-shadow:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_shadow == 'true' }}
+    needs: shortterm
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4   # 主线 job 已 push state/payload，此 checkout 拿到最新
+
+      - name: 检出 quant-lab（legacy 侧：自带 data/kline + data/meta）
+        uses: actions/checkout@v4
+        with:
+          repository: andy-develop/quant-lab
+          path: src/quant-lab
+          fetch-depth: 1
+
+      - name: 检出数据仓（日级增量后的最新状态）
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${DATA_REPO_TOKEN}@github.com/andy-develop/quant-hub-data.git" data-repo
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'    # 与主线 job 同版本，保证 pandas/numpy 逐位一致
+
+      - name: 安装 quant-lab 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r src/quant-lab/requirements.txt
+
+      - name: shadow 侧检出 + 数据仓物化 + 自产 payload
+        run: |
+          # 独立检出，绝不覆盖 legacy src/quant-lab 的 data/（比对两侧必须来自不同数据源）
+          cp -R src/quant-lab src/quant-lab-shadow
+          ARGS="--qlab src/quant-lab-shadow --out state/payload_shadow --summary-out /tmp/summary_shadow.json --writer strategy-pm@shadow --data-root data-repo/data"
+          [ "${{ github.event.inputs.skip_blackbox }}" = "true" ] && ARGS="$ARGS --skip-blackbox"
+          python -m tools.run_shortterm $ARGS
+
+      - name: shadow_diff 逐位比对 + 晋级台账
+        run: |
+          # trading-day = 本次数据日（shadow 自产 data_date；缺失则北京今日）
+          TRADING_DAY=$(python3 -c 'import json;print(json.load(open("/tmp/summary_shadow.json",encoding="utf-8")).get("data_date") or "")')
+          [ -n "$TRADING_DAY" ] || TRADING_DAY=$(TZ=Asia/Shanghai date +%F)
+          python -m tools.shadow_diff --shadow state/payload_shadow --legacy state/payload \
+            --tol 1e-9 --out state/shadow/diff.json \
+            --ledger state/shadow/ledger.json --trading-day "$TRADING_DAY" --threshold 3
+          echo "TRADING_DAY=$TRADING_DAY" >> "$GITHUB_ENV"
+
+      - name: 提交 shadow 审计件（payload_shadow + diff + 晋级台账）
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/payload_shadow state/shadow
+          if git diff --cached --quiet; then
+            echo "shadow 无变化（同日重跑幂等），跳过提交"
+          else
+            git commit -m "strategy(shortterm): shadow 比对 + 晋级台账 ${{ env.TRADING_DAY }} [run ${{ github.run_number }}]"
+            git pull --rebase --autostash || true
+            git push
+          fi

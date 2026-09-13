@@ -26,7 +26,9 @@ import os
 import sys
 
 # 每次都变、不参与指纹的字段
-VOLATILE = {"generated_at", "built_at", "timestamp", "run_id", "workflow_run_id"}
+# （"generated" 是 build_report 渲染 MODES 时注入的逐线时间戳，每次运行必变）
+VOLATILE = {"generated_at", "built_at", "timestamp", "run_id", "workflow_run_id",
+            "generated"}
 # 视为 KPI 的数值字段名（小写子串匹配）
 KPI_KEYS = ("ret", "return", "sharpe", "mdd", "drawdown", "trade", "win", "cagr",
             "vol", "alpha", "beta", "ir", "calmar", "exposure", "nav")

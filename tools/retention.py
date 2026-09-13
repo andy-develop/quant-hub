@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """tools/retention.py —— §4.2 封存过期 + 体积报告（Phase 5 data-retention.yml 的本地引擎）。
 
-- stock 保留最近 730 交易日 / etf 2430 交易日 / index 不过期（schema.RETENTION）
+- stock 保留最近 1250 交易日（5 年，Q1 决策 2026-09-13：保回测预热窗口） / etf 2430 交易日 / index 不过期（schema.RETENTION）
 - 过期 = 删整个 year=/month= 分区目录（纯文件系统，幂等、可 dry-run）
 - 删前 Release 归档门禁：--require-release 时需存在 release 归档，否则中止（后悔药）
 - --archive-out DIR：把本次将删分区打包 tar.zst 到 DIR（幂等：已有同月归档即跳过）

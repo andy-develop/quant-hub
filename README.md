@@ -5,7 +5,7 @@
 > 施工依据：《quant-hub-合并方案》· 配套：`docs/落地手册.md`（完整落地手册）
 >
 > **在线合并页（LIVE）**：<https://andy-develop.github.io/quant-hub/> —— `build-publish.yml` 每交易日 08:12 / 17:35（北京）自动重发。
-> 行情数据在私有仓 `quant-hub-data`（指数资产类已真实首灌；个股/ETF 待迁移，见落地手册 §12.6）。
+> 行情数据在私有仓 `quant-hub-data`（三资产类均已首灌，日级增量 data-stock-incr / data-etf-incr / data-index 运行中；短线域经 `materialize_qlab.py` 物化 → quant-lab 布局，见 `docs/handoff/README.md` 阶段C/D/E）。
 
 ## 结构
 
@@ -39,7 +39,7 @@ python -m web.build --src domains --out web/dist/index.html   # 自包含单页�
 
 | 流水线 | 触发 | 职责 |
 |---|---|---|
-| `data-retention.yml` | 周六 19:00 UTC | 周度封存+过期（个股 730 / ETF 2430 交易日，`retention.py`）+ 数据仓体积报告（700MB warn / 900MB error） |
+| `data-retention.yml` | 周六 19:00 UTC | 周度封存+过期（个股 1250 / ETF 2430 交易日，`retention.py`）+ 数据仓体积报告（700MB warn / 900MB error） |
 | `repo-health.yml` | 周一 01:01 UTC | 巡检最近 5 交易日各域 runlog + payload 体积 + 数据仓体积，异常自动开 issue（去重） |
 | `strategy-pm.yml` / `build-publish.yml` | 交易日 | 各域链路末尾写 `state/<d>/runlog/` 台账（`runlog.py`），并校验 README AUTO-KPI 与 payload 一致（`check_docs.py --check-only`） |
 

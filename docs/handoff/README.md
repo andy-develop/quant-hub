@@ -8,6 +8,50 @@
 
 ---
 
+## 阶段C/D/E 交接（2026-09-13，阶段A/B 之后）
+
+依据《quant-hub-合并方案》§2.7/§7.1-7.3/§13.2 + grill-me Q1/Q2/Q5 决策实施。本阶段把「数据仓 → 短线策略链」打通：回测中间层、数据仓物化、shadow 影子链逐位比对与晋级台账。
+
+### 阶段C：指数保留期资产分工固化（Q2，commit 87ef344）
+
+- `schema.RETENTION`：`asset="etf"`（普通指数 H20269/H30269/H00300/000300）= **2430 交易日**；`asset="index"`（仅基准 sh000001/sz399001）= **None 全史冻结**，绝不可删
+- `schema.check_retention` 防御：基准指数严禁传非 None（expire 按整月目录删，误传会删光 1990 起大盘全史）；expire 读契约单一来源
+- `tools/data_pipeline/verify.py::check_derived` 已同时覆盖 `index_*` 与 `etf_*` 派生 manifest（阶段A/B 遗留事项已闭环）
+
+### 阶段D：回测中间层（Q3，commit 867146b）
+
+- 摘要入代码仓：`run_shortterm` 写 `state/shortterm/backtest_summary.json`，**KPI 口径与 `tools/shadow_diff.extract_kpis` 逐位一致**（momentum/blackbox × on/off 各 6 项，冻结防漂移）
+- 明细入数据仓（不进代码仓）：`data/state/shortterm/backtest/<data_date>/`，只留「给定 data/+sha 可逐位重算」的判决性输出（equity/trades/holdings/signals/market_regime/signals_bb），排除 flags_long.parquet（65M）与 lgbm_scores.parquet（9.9M）
+
+### 阶段E：数据仓 → 短线链（strategy-pm 影子链）
+
+- **E-1** meta 种子化（commit 1877043）：数据仓 meta 与 universe/st_history 1:1 搬运
+- **E-2a** 物化器 `tools/data_pipeline/materialize_qlab.py`：数据仓 → quant-lab 布局。幂等约定：`_clear_kline` **先清顶层分片 + incremental + fixup**（防 reader.load 已并入的 fixup 被残留件二次叠加）→ `reader.load` 全量重建 `data/kline/{fq}_{mkt}_{nn}.parquet` 平铺分片 + `data/meta/{stock_basic,st_history,index_daily,bench_daily,csi1000_daily}`；csi1000 缺失降级跳过不阻塞
+- **E-2b** `run_shortterm.py --data-root`：跑计算链前先物化（shadow 侧数据源切换点）；不传则用 quant-lab 检出自带 data/（legacy 直跑模式，与旧 CI 完全一致）
+- **E-2c** `strategy-pm.yml` 新增 `shortterm-shadow` job（`workflow_dispatch run_shadow=true` 才跑，默认关）：`cp -R` **独立检出**（绝不覆盖 legacy 侧 src/quant-lab 的 data/）→ `--data-root` 物化自产 `state/payload_shadow` → `shadow_diff --tol 1e-9` → 晋级台账 `state/shadow/ledger.json`（**连续 3 交易日 PROMOTE-READY 才晋级**，§7.2 Phase-4）。shadow 失败/BLOCKED 绝不阻塞主线
+- **Q1 决策**：stock 保留期 **730 → 1250 交易日（5 年）**（schema.RETENTION + retention.py + data-retention.yml 同步）＋ 回补 **2023-01..08**（`tools/data_pipeline/stock_backfill.py`，已执行：hfq year=2023 month=01 起有数据）。动机：原 730 会被日级增量 expire 删掉回测起点 2023-09-01 所需 hfq 预热窗口（ret120 需 2023-01 起），shadow_diff 永远无法逐位晋级
+
+### ★ 本场关键发现：legacy raw fixup 口径缺陷（shadow_diff BLOCKED 根因）
+
+- quant-lab 检出自带的 `data/kline/fixup/raw_0_*.parquet`（28 只）是 **手单位 volume + 无 amount 列** 的旧格式；数据仓 raw 是 **股单位 + 真实 amount 全量**
+- 后果：`build_indicators` 的 `amt = amount.fillna(close*vol*100)` 大量走兜底近似，amt20 掺入手/股 100 倍量纲错乱 → 入口绝对阈值 `m5 = amt20 >= 3e7` 翻转 → 动量信号系统性分歧（legacy 87,245 vs shadow 81,961，trades 473 vs 459）
+- 修复：quant-lab 数据重建为数据仓口径（本地 src/quant-lab 与 /tmp 双检出均已物化重建，fixup 清空）。修复后双侧 payload **shadow_diff = PROMOTE-READY**（data_date/kpi/sha 逐位一致，台账 1/3）
+- **遗留：`andy-develop/quant-lab` 远端 data/ 仍为旧格式**——CI 主线（legacy 数据源直跑）用它时仍会与 shadow 分歧；需先把远端数据重建为数据仓口径（先修 bug 再取基线），或直接让主线也走数据仓（等于提前晋级）
+
+### 验证记录
+
+- shadow_diff：`quant-lab: data_date_equal=true / kpi_equal=true / sha_equal=true → PROMOTE-READY`（threshold=3，台账 1/3）
+- pytest 分域全绿：合并层 **293 passed / 3 skipped** · shortterm 43 / 9 skip · etf 64 · selected 11（README 命令逐条执行）
+- 数据仓：hfq 有效截止 09-11（fixup 全史）、raw 止 09-04；回补后 hfq 2023-01-03 起
+
+### 遗留事项
+
+- `andy-develop/quant-lab` 远端 data/kline 需重建为数据仓口径（见上）——须与 shadow 链首跑同批处理
+- shadow 链首次真实 CI 跑（workflow_dispatch run_shadow=true）待验证；本地端到端已过
+- `_build_summary` 兼容 envelope dict 与 DomainPayload 对象两种形态（tests/tools/test_run_shortterm_summary 口径冻结）
+
+---
+
 ## 数据链阶段A/B 交接（2026-09-13）
 
 依据《quant-hub-合并方案》§2.4（写库时序 16:35 data-index → 16:40 data-stock → 16:55 data-etf → 17:00 契约+verify）、grill-me 五轮决策（个股 3 年/指数 10 年/日级增量顺手删/摘要入 state/）实施。

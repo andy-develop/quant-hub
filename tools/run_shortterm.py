@@ -12,6 +12,9 @@ bench_daily,st_history,lgbm_model}`，所以**计算链可离线跑**（不联�
 
 用法（CI 内，quant-lab 检出在 --qlab）：
     python -m tools.run_shortterm --qlab src/quant-lab --out state/payload [--skip-blackbox]
+    python -m tools.run_shortterm --qlab src/quant-lab --out state/payload --data-root data-repo/data
+        # ↑ 先物化数据仓 → quant-lab 布局（方案 §4.2：strategy-pm 读数据仓、跑引擎），
+        #   再跑计算链；不传则用 quant-lab 检出自带的 data/（legacy 直跑模式）
 """
 from __future__ import annotations
 
@@ -49,7 +52,14 @@ def _build_summary(payloads, data_date, has_blackbox, *, writer=None):
     """
     from tools.shadow_diff import _shortterm_line_kpis
 
-    by = {(env.get("domain"), env.get("variant")): env for env in (payloads or [])}
+    # 兼容两种形态：DomainPayload 对象（normalize_quant_lab 产物）与 envelope dict
+    # （state/payload/*.json 读回）——与 shadow_diff.extract_kpis 消费同一种 dict 口径。
+    def _f(env, key):
+        return env.get(key) if isinstance(env, dict) else getattr(env, key)
+
+    by = {}
+    for env in (payloads or []):
+        by[(_f(env, "domain"), _f(env, "variant"))] = env
     kpi_names = ("ret", "mdd", "sharpe", "n_trades", "win_rate", "last_equity")
     out = {
         "domain": "shortterm",
@@ -61,7 +71,7 @@ def _build_summary(payloads, data_date, has_blackbox, *, writer=None):
     }
     for variant in ("momentum", "blackbox"):
         env = by.get(("quant-lab", variant))
-        y3 = (env.get("payload") or {}).get("y3") if env else None
+        y3 = ((_f(env, "payload") or {}).get("y3") if env else None)
         lines = {}
         for line in ("on", "off"):
             node = (y3 or {}).get(line)
@@ -86,7 +96,7 @@ def _write_summary(summary: dict, out: str, logger=print) -> str:
 
 def run(qlab: str, out: str, *, skip_blackbox: bool = False, logger=print,
         summary_out: str | None = None, detail_out: str | None = None,
-        writer: str | None = None) -> dict:
+        writer: str | None = None, data_root: str | None = None) -> dict:
     scripts = os.path.join(qlab, "scripts")
     if not os.path.isdir(scripts):
         raise RuntimeError(f"quant-lab 检出无效（无 scripts/）：{qlab}")
@@ -96,6 +106,15 @@ def run(qlab: str, out: str, *, skip_blackbox: bool = False, logger=print,
     import engine           # noqa: E402
     import build_report     # noqa: E402
     BASE = engine.BASE      # = qlab 根（模块按 __file__ 定位）
+
+    # [0/4]（可选）数据仓 → quant-lab 布局物化：strategy-pm 影子链的数据源切换点。
+    #   物化器重建 data/kline 分片 + data/meta/{stock_basic,st_history,index_daily,
+    #   bench_daily,csi1000_daily}（幂等、先清后写），其余 meta（lgbm_model 等）不动。
+    if data_root:
+        logger(f"[0/4] 物化数据仓 → quant-lab 布局（data_root={data_root}）")
+        from tools.data_pipeline import materialize_qlab
+        materialize_qlab.run(data_root=data_root, out=qlab,
+                             writer=writer or "materialize_qlab", logger=logger)
 
     logger("[1/4] signals.run_scan（动量信号扫描）")
     signals.run_scan()
@@ -188,10 +207,12 @@ def main(argv=None) -> int:
     ap.add_argument("--detail-out", default="",
                     help="回测明细日快照目录（Q3 入数据仓；空=不导出）")
     ap.add_argument("--writer", default=None, help="写入方标识（默认 None）")
+    ap.add_argument("--data-root", default=None,
+                    help="数据仓根（提供时先物化数据仓→quant-lab 布局再跑计算链）")
     args = ap.parse_args(argv)
     run(args.qlab, args.out, skip_blackbox=args.skip_blackbox,
         summary_out=args.summary_out, detail_out=args.detail_out or None,
-        writer=args.writer)
+        writer=args.writer, data_root=args.data_root)
     return 0
 
 

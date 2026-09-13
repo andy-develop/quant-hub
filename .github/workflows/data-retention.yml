@@ -1,7 +1,7 @@
 name: data-retention
 
 # §4.2 封存与过期 + §4.5 体积治理：每周日 03:00（CST）跑一次。
-# - 过期 = 删整分区目录（stock 730 交易日 / etf 2430 交易日 / index 不过期）
+# - 过期 = 删整分区目录（stock 1250 交易日（5 年，Q1 决策） / etf 2430 交易日 / index 不过期）
 # - 删前归档：将删分区打包 → Release asset（后悔药，一次性）
 # - 体积报告写 state/data/runlog + 更新 manifest
 # 不跑数据抓取，只做封存/过期/报告；幂等，可 workflow_dispatch 补跑。

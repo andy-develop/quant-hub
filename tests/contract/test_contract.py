@@ -79,8 +79,9 @@ def test_retention_is_trade_days():
     指数保留期资产分工（grill-me Q2 显式确认）：
       - asset="etf"（普通指数）= 2430 交易日（10 年）
       - asset="index"（仅基准大盘 sh000001/sz399001）= None（全历史冻结，绝不可删）
+    股票保留期（Q1 决策 2026-09-13）：730 → 1250 交易日（5 年），保回测预热窗口。
     """
-    assert schema.RETENTION["stock"] == 730
+    assert schema.RETENTION["stock"] == 1250
     assert schema.RETENTION["etf"] == 2430
     assert schema.RETENTION["index"] is None
 
@@ -99,9 +100,9 @@ def test_retention_index_never_expires():
 
 def test_retention_only_allows_increase(tmp_path):
     # 合规：等于契约值
-    schema.check_retention("stock", 730)
+    schema.check_retention("stock", 1250)
     # 合规：调大
-    schema.check_retention("stock", 800)
+    schema.check_retention("stock", 1300)
     # 违规：调小（会永久删数据）
     with pytest.raises(AssertionError, match="retention violation"):
         schema.check_retention("stock", 700)
