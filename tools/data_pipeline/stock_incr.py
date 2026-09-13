@@ -104,6 +104,24 @@ def build_ratio(raw_last: dict, hfq_last: dict) -> dict:
     return out
 
 
+def _sealed_has_day(root: str, day, pd) -> bool:
+    """封存分区是否已含 day（target_day 所在月的封存 batch 里查；首灌封存已到 target 时幂等跳过，
+    避免快照增量与封存行重复入库）。只读 target_day 所在月目录，轻量。"""
+    base = os.path.join(root, "market", ASSET, "raw")
+    target_month = os.path.join(base, f"year={day.year}", f"month={day.month:02d}")
+    if not os.path.isdir(target_month):
+        return False
+    d0 = pd.Timestamp(day).date()
+    for p in sorted(glob.glob(os.path.join(target_month, "*.parquet"))):
+        try:
+            dates = pd.to_datetime(pd.read_parquet(p, columns=["date"])["date"]).dt.date
+            if (dates == d0).any():
+                return True
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] _sealed_has_day 跳过 {p}: {e}")
+    return False
+
+
 # ---------------------------------------------------------------------------
 # 2. 抓取：腾讯批量快照全A
 # ---------------------------------------------------------------------------
@@ -295,10 +313,10 @@ def run(*, root="data", asof=None, writer="data-stock-incr", offline=False,
     target_day = calendar.closed_only_cutoff(asof)      # 最近已收盘交易日
     logger(f"[gate] asof={asof} target_day={target_day}（最近已收盘交易日）")
 
-    # ---- 幂等：同日分片已存在 -> 跳过抓取/写入（write_incremental 原子写） ----
+    # ---- 幂等：_incr 分片已存在，或封存分区已含 target_day（首灌已覆盖）-> 跳过 ----
     inc = os.path.join(root, "market", ASSET, "raw", "_incr", target_day.strftime("%Y%m%d"), "raw.parquet")
-    if os.path.exists(inc):
-        logger(f"[skip] {target_day} raw 增量已入库（{inc}），跳过抓取与写入")
+    if os.path.exists(inc) or _sealed_has_day(root, target_day, pd):
+        logger(f"[skip] {target_day} raw 增量已入库（_incr 或封存分区已含），跳过抓取与写入")
         summary = {"pipeline": "stock_incr", "asof": asof.isoformat(), "writer": writer,
                    "asset": ASSET, "target_day": target_day.isoformat(),
                    "skipped": True, "reason": "increment exists",
