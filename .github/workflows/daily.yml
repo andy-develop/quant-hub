@@ -42,7 +42,7 @@ jobs:
 
       - name: 拉取数据仓（私有）
         run: |
-          git clone --depth 1 "https://x-access-token:${{ secrets.DATA_TOKEN }}@github.com/andy-develop/quant-hub-data.git" data-repo
+          git clone --depth 1 "https://x-access-token:${{ secrets.DATA_REPO_TOKEN }}@github.com/andy-develop/quant-hub-data.git" data-repo
           # 契约版本核对：不一致立即中止（宁缺勿错）
           python - <<'PY'
           import json, sys

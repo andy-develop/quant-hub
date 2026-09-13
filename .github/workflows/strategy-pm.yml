@@ -49,9 +49,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r src/quant-lab/requirements.txt
 
-      - name: 跑短线计算链 → 抽 payload
+      - name: 跑短线计算链 → 抽 payload + 回测摘要/明细
         run: |
-          ARGS="--qlab src/quant-lab --out state/payload"
+          # Q3：摘要入 state/（git 提交）；明细日快照导 /tmp/bt_detail，由下一 step 推数据仓
+          ARGS="--qlab src/quant-lab --out state/payload --summary-out state/shortterm/backtest_summary.json --detail-out /tmp/bt_detail"
           [ "${{ github.event.inputs.skip_blackbox }}" = "true" ] && ARGS="$ARGS --skip-blackbox"
           python -m tools.run_shortterm $ARGS
 
@@ -69,7 +70,7 @@ jobs:
           print(f"runlog: shortterm（{len(files)} 个 payload）")
           EOF
 
-      - name: 提交 state/（payload + runlog，carry-forward 留档）
+      - name: 提交 state/（payload + runlog + 摘要，carry-forward 留档）
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -77,7 +78,38 @@ jobs:
           if git diff --cached --quiet; then
             echo "短线 state 无变化，跳过提交"
           else
-            git commit -m "strategy(shortterm): 自产 payload + runlog $(date -u +'%F %H:%M') UTC [run ${{ github.run_number }}]"
+            git commit -m "strategy(shortterm): 自产 payload + runlog + 回测摘要 $(date -u +'%F %H:%M') UTC [run ${{ github.run_number }}]"
+            git pull --rebase --autostash || true
+            git push
+          fi
+
+      # Q3：回测明细日快照入数据仓（data/state/shortterm/backtest/YYYY-MM-DD/），
+      # 摘要入代码仓 state/（上一 step），明细只入数据仓（~700K/日，不进代码仓）。
+      # DATA_REPO_TOKEN = fine-grained PAT（写 quant-hub-data，见 docs/handoff §数据链）。
+      - name: 回测明细快照推数据仓（data/state/shortterm/backtest/<data_date>/）
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          BT=/tmp/bt_detail
+          if [ ! -d "$BT" ] || [ -z "$(ls -A "$BT")" ]; then
+            echo "无回测明细（--detail-out 空或全缺），跳过数据仓推送"
+            exit 0
+          fi
+          # 明细目录按摘要 data_date（北京数据日）命名；摘要缺失则用北京今日
+          DATA_DATE=$(python3 -c 'import json;print(json.load(open("state/shortterm/backtest_summary.json",encoding="utf-8")).get("data_date") or "")')
+          [ -n "$DATA_DATE" ] || DATA_DATE=$(TZ=Asia/Shanghai date +%F)
+          git clone --depth 1 "https://x-access-token:${DATA_REPO_TOKEN}@github.com/andy-develop/quant-hub-data.git" data-repo
+          mkdir -p "data-repo/data/state/shortterm/backtest/$DATA_DATE"
+          cp -f "$BT"/* "data-repo/data/state/shortterm/backtest/$DATA_DATE/"
+          cd data-repo
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A data/state/shortterm/backtest
+          if git diff --cached --quiet; then
+            echo "回测明细无变化（同日重跑幂等），跳过数据仓提交"
+          else
+            git commit -m "data(shortterm): $DATA_DATE 回测明细快照 [run ${{ github.run_number }}]"
             git pull --rebase --autostash || true
             git push
           fi
