@@ -1,11 +1,11 @@
 {
  "domain": "etf",
  "variant": "sector",
- "generated_at": "2026-09-12T20:07:18+08:00",
+ "generated_at": "2026-09-13T22:06:45+08:00",
  "data_date": "2026-09-09",
  "schema_version": 1,
  "payload": {
-  "generated_at": "2026-09-12 12:10",
+  "generated_at": "2026-09-13 12:21",
   "data_date": "2026-09-09",
   "version": "v1.1",
   "start": "2018-01-01",
