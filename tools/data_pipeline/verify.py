@@ -82,14 +82,21 @@ def check_daily(root, cal, pd, problems):
 
 
 def check_derived(root, pd, problems):
-    """weekly/monthly 派生分区：必带 is_partial；derived_from.sha256 与当前 daily 指纹一致。"""
-    from tools.data_pipeline.index import daily_fingerprint, FQ, GROUP
+    """weekly/monthly 派生分区：必带 is_partial；derived_from.sha256 与当前 daily 指纹一致。
+
+    ★ 同时覆盖 index_（基准大盘 broad）与 etf_（中证 csindex）两组派生 manifest。
+    """
+    from tools.data_pipeline.index import daily_fingerprint, FQ
     from common.store.reader import load
     n = 0
     mdir = os.path.join(root, "manifest")
-    for mp in glob.glob(os.path.join(mdir, "index_*_weekly.json")) + \
-             glob.glob(os.path.join(mdir, "index_*_monthly.json")):
+    mps = (glob.glob(os.path.join(mdir, "index_*_weekly.json"))
+           + glob.glob(os.path.join(mdir, "index_*_monthly.json"))
+           + glob.glob(os.path.join(mdir, "etf_*_weekly.json"))
+           + glob.glob(os.path.join(mdir, "etf_*_monthly.json")))
+    for mp in sorted(set(mps)):
         man = json.load(open(mp, encoding="utf-8"))
+        asset = man.get("asset", "index")     # 兼容旧 manifest（index_broad_* 无 asset 字段）
         code, freq = man.get("code"), man.get("freq")
         n += 1
         # is_partial 列存在
@@ -100,15 +107,15 @@ def check_derived(root, pd, problems):
                 problems.append(f"[partial] {man['path']}: 缺 is_partial 列（§2.7）")
         # 派生一致性
         try:
-            daily = load(asset="index", fq=FQ, freq="daily", code=code, root=root)
+            daily = load(asset=asset, fq=FQ, freq="daily", code=code, root=root)
             fp = daily_fingerprint(daily, pd)
             got = (man.get("derived_from") or {}).get("sha256")
             if got != fp:
                 problems.append(
-                    f"[derived] {code}/{freq}: derived_from.sha256={str(got)[:12]} != "
+                    f"[derived] {asset}/{code}/{freq}: derived_from.sha256={str(got)[:12]} != "
                     f"daily 重算={fp[:12]} —— daily 更新了但周月K未重算（R17）")
         except Exception as e:  # noqa: BLE001
-            problems.append(f"[derived] {code}/{freq}: 校验异常 {e}")
+            problems.append(f"[derived] {asset}/{code}/{freq}: 校验异常 {e}")
     return n
 
 

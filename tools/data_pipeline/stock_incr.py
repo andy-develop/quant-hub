@@ -461,15 +461,17 @@ def run(*, root="data", asof=None, writer="data-stock-incr", offline=False,
 
 
 def _expire(root, target_day, writer, logger, summary: dict) -> None:
-    """增量末尾顺手 expire 删旧（Q5）。stock 保留 730 交易日，删整月目录、删前归档。"""
+    """增量末尾顺手 expire 删旧（Q5）。保留期读 schema.RETENTION（单一事实来源）。"""
     from common.store.writer import expire_partitions
+    from common.store.schema import RETENTION as _RET
+    keep = _RET[ASSET]  # stock=730（3 年）
     reports = {}
     for fq in FQS:
-        rep = expire_partitions(ASSET, fq, 730, root=root, today=target_day,
+        rep = expire_partitions(ASSET, fq, keep, root=root, today=target_day,
                                 dry_run=False, pd=_pd())
         reports[fq] = {"removed": len(rep.get("removed", [])), "cutoff": rep.get("cutoff")}
         for r in rep.get("removed", []):
-            logger(f"  [expire] 删除 {r['dir']}（730 交易日窗口，last_day {r['last_day']} < cutoff）")
+            logger(f"  [expire] 删除 {r['dir']}（{keep} 交易日窗口，last_day {r['last_day']} < cutoff）")
     summary["expire"] = reports
 
 

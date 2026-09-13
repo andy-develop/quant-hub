@@ -37,7 +37,6 @@ from tools.data_pipeline.csindex import (  # noqa: E402
 )
 
 ASSET = "etf"
-RETENTION_TRADE_DAYS = 2430   # 方案 Q2：普通指数 10 年；基准指数（asset="index"）另由 index 链路全史保留
 
 
 def _pd():
@@ -188,13 +187,15 @@ def run(codes=CSINDEX_CODES, *, root="data", asof=None, writer="data-etf-incr",
 
 
 def _expire(root, target_day, writer, logger, summary: dict) -> None:
-    """增量末尾顺手 expire 删旧（Q5）。etf 保留 2430 交易日，删整月目录、删前归档。"""
+    """增量末尾顺手 expire 删旧（Q5）。保留期读 schema.RETENTION（单一事实来源）。"""
     from common.store.writer import expire_partitions
-    rep = expire_partitions(ASSET, FQ, RETENTION_TRADE_DAYS, root=root, today=target_day,
+    from common.store.schema import RETENTION as _RET
+    keep = _RET[ASSET]  # etf=2430（10 年，Q2：普通指数；基准在 asset="index" 全史保留）
+    rep = expire_partitions(ASSET, FQ, keep, root=root, today=target_day,
                             dry_run=False, pd=_pd())
     summary["expire"] = {"removed": len(rep.get("removed", [])), "cutoff": rep.get("cutoff")}
     for r in rep.get("removed", []):
-        logger(f"  [expire] 删除 {r['dir']}（2430 交易日窗口，last_day {r['last_day']} < cutoff）")
+        logger(f"  [expire] 删除 {r['dir']}（{keep} 交易日窗口，last_day {r['last_day']} < cutoff）")
 
 
 def _synthetic_rows(code: str, start: _dt.date, end: _dt.date) -> list:

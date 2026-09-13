@@ -74,10 +74,27 @@ def test_volume_unit_is_shares_not_wan_yuan():
 
 
 def test_retention_is_trade_days():
-    """★ 交易日，不是自然日（长假会差 5–8 天）。"""
+    """★ 交易日，不是自然日（长假会差 5–8 天）。
+
+    指数保留期资产分工（grill-me Q2 显式确认）：
+      - asset="etf"（普通指数）= 2430 交易日（10 年）
+      - asset="index"（仅基准大盘 sh000001/sz399001）= None（全历史冻结，绝不可删）
+    """
     assert schema.RETENTION["stock"] == 730
     assert schema.RETENTION["etf"] == 2430
     assert schema.RETENTION["index"] is None
+
+
+def test_retention_index_never_expires():
+    """★ 基准指数（asset="index"）契约 = 全历史：check_retention 拒绝任何非 None 保留期。
+
+    防御：expire_partitions 按整月目录删，若误传 2430 会把 1990 起的大盘全史删光。
+    """
+    schema.check_retention("index", None)                    # 合规：全历史
+    with pytest.raises(AssertionError, match="全历史冻结"):
+        schema.check_retention("index", 2430)                # 违规：基准指数严禁设保留期
+    with pytest.raises(AssertionError, match="只允许调大"):
+        schema.check_retention("etf", None)                  # 违规：etf 契约 2430，None=不过期
 
 
 def test_retention_only_allows_increase(tmp_path):

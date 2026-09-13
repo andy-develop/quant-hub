@@ -230,7 +230,7 @@ def expire_partitions(
     分区边界时才需要删一个目录，其余日子一行不动。
     """
     if keep_trade_days is None:
-        return {"removed": [], "reason": "index retention=None (不过期)"}
+        return {"removed": [], "reason": f"{asset} retention=None (不过期)"}
     if pd is None:
         import pandas as pd  # noqa: PLC0415
 

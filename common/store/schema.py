@@ -112,10 +112,16 @@ AGGREGATOR_VERSION = "common/aggregate.py@v1"
 # 保留期（★交易日，不是自然日）
 # ---------------------------------------------------------------------------
 # 为什么用交易日：长假会让"3 自然年"与"730 交易日"差 5–8 天。
+#
+# ★ 指数保留期的资产分工（grill-me Q2 显式确认，2026-09-13）：
+#   普通指数（中证 H20269/H30269/H00300/000300 等）统一走 asset="etf" = 2430 交易日（10 年）；
+#   asset="index" 只装两个基准大盘（BROAD_INDEX_CODES：sh000001/sz399001），全历史、不过期，
+#   是短线策略的对比基准，绝不可删。若未来把普通指数并入 asset="index"，expire 的
+#   "删整月目录"会连基准全史一起删（零重写原则冲突），必须先给 expire 加 code 级排除。
 RETENTION: dict[str, int | None] = {
     "stock": 730,
     "etf": 2430,     # 10 年；体积仅 4MB，"ETF 保留期可以给得很宽松，不用犹豫"
-    "index": None,   # 不过期（体积可忽略）
+    "index": None,   # ★ 仅基准大盘全历史（Q2 显式确认）；普通指数在 etf=2430
 }
 
 # ---------------------------------------------------------------------------
@@ -154,7 +160,7 @@ def columns_for(asset: str) -> tuple[str, ...]:
     return tuple(COLUMNS) + tuple(OPTIONAL)
 
 
-def check_retention(asset: str, trade_days: int) -> None:
+def check_retention(asset: str, trade_days: int | None) -> None:
     """校验某资产类的实际保留交易日数是否符合契约。
 
     只允许 >= 契约值（调大）。调小需显式确认（会永久删数据）。
@@ -163,7 +169,19 @@ def check_retention(asset: str, trade_days: int) -> None:
         raise ValueError(f"unknown asset: {asset!r}")
     want = RETENTION[asset]
     if want is None:
+        # ★ 基准指数（asset="index"）契约 = 全历史（grill-me Q2 显式确认）。
+        #   严禁传非 None：expire 按整月目录删，会把 1990 起的大盘全史删光。
+        if trade_days is not None:
+            raise AssertionError(
+                f"retention violation: asset={asset} 契约=None（全历史冻结，Q2 基准指数显式确认），"
+                f"收到 {trade_days}；如需改保留期必须改 schema.RETENTION + 全员 review"
+            )
         return
+    if trade_days is None:
+        raise AssertionError(
+            f"retention violation: asset={asset} 契约={want}，收到 None；"
+            f"None=不过期 违背「只允许调大」规则"
+        )
     if trade_days < want:
         raise AssertionError(
             f"retention violation: asset={asset} has {trade_days} trade days "
