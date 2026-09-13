@@ -131,7 +131,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4   # 主线 job 已 push state/payload，此 checkout 拿到最新
+      # 必须显式 ref: main：默认 ref=GITHUB_SHA 是 dispatch 时的提交，state/payload 还是主线
+      # job 推送前的旧版本（会拿旧 base 的 payload 比对，误报 BLOCKED）。ref: main 在步骤执行
+      # 时解析，needs: shortterm 保证主线已 push 完成。
+      - uses: actions/checkout@v4
+        with:
+          ref: main   # 主线 job 已 push state/payload，此 checkout 拿到最新
 
       - name: 检出 quant-lab（legacy 侧：自带 data/kline + data/meta）
         uses: actions/checkout@v4
