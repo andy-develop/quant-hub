@@ -8,6 +8,45 @@
 
 ---
 
+## 数据链阶段A/B 交接（2026-09-13）
+
+依据《quant-hub-合并方案》§2.4（写库时序 16:35 data-index → 16:40 data-stock → 16:55 data-etf → 17:00 契约+verify）、grill-me 五轮决策（个股 3 年/指数 10 年/日级增量顺手删/摘要入 state/）实施。
+
+### 数据仓（andy-develop/quant-hub-data）已上传 workflow
+
+| 文件 | 触发 | 说明 |
+|---|---|---|
+| `data-index.yml` | cron 16:35 | 指数全史/增量（h 区 H2 闸门、幂等提交） |
+| `data-stock-incr.yml` | cron `40 8 * * 1-5`（北京 16:40） | 个股日级增量：腾讯快照+除权检测+hfq 折算+ifzq 修复；`--expire` 730 交易日顺手删旧 |
+| `data-etf-incr.yml` | cron `55 8 * * 1-5`（北京 16:55） | 中证指数（H20269/H30269/H00300/000300，asset=etf，2430 日）增量 + 周/月派生 |
+
+### 代码仓新增脚本
+
+- `tools/data_pipeline/stock_incr.py`：gate → 幂等（`_incr/YYYYMMDD` 存在 **或 `_sealed_has_day`** 封存分区已含 target_day → 跳过）→ 腾讯快照 60/批 → 覆盖率门禁（<80% 红中止/<95% 黄）→ 除权检测（昨收 |Δ|>0.5% + 保险丝 max(50,0.3n)）→ ifzq 分页修复 + qfq×K hfq 折算 → `write_incremental` → fixup 分区 → `_expire` → runlog
+- `tools/data_pipeline/etf_incr.py`：复用 `csindex.py` 口径（`ingest_daily_increment/derive_period/freshness_gate/bars_to_frame`），按天分片写 `_incr/YYYYMMDD`（幻影行以 `calendar.is_trading_day` 过滤），重物化 weekly/monthly，末尾 expire 2430 交易日
+
+### 关键约定（勿破坏）
+
+1. **幂等语义**：stock 增量跳过条件 = `_incr/YYYYMMDD` 存在 **或** 封存分区已含该日（首灌封存已到 target_day 时不得重复入库）
+2. **老仓 hfq 口径**：hfq = qfq×K，K=库内最后 hfq close / 重拉 qfq 同日 close（后复权锚定），除权日修复优先
+3. **写入 API**：`common/store/writer.py::write_incremental / seal_partition / expire_partitions`（封存时删 _incr 日分片；expire 前归档 `_archive/`）
+4. **wflow 模板**：双仓 checkout（本仓+`code/`）、`PYTHONPATH: code`、H2 交易日闸门（schedule 才跑）、`concurrency: group: data-commit`、幂等提交（`git diff --cached --quiet` 跳过）
+5. **push 数据仓方式**（本地）：`GH_PAT=$(gh auth token) GIT_ASKPASS=/tmp/askpass.sh GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c http.proxy=socks5h://127.0.0.1:7897 push origin integration:main`
+
+### 验证记录
+
+- 阶段A：个股首灌（run 34694306983）、ETF 首载（run 34696393009）、sh000852 回补（run 34708789967）verify 全绿
+- 阶段B：data-stock-incr（run 34734901170）/ data-etf-incr（run 34734910940）dispatch 均 success，执行路径为合法幂等跳过（stock：封存已含 09-11；etf：无增量窗口），gate/幂等/提交链在 CI 可跑通
+- 本地：`pytest tests/` 全绿（含 `stats.ok` 回填修复后 27 passed）；腾讯快照真实抓取冒烟 59/60（`FetchStats.ok` 合并仓遗留死字段已回填 = `len(rows)`，commit `5620ca3`）
+
+### 遗留事项
+
+- 真实抓取路径待下一交易日 schedule 首跑验证（本地冒烟已过，CI 首次真实跑未发生）
+- `FetchStats` parse 级丢弃明细（short_format/parse_error 等）在 `TencentSnapshotVendor.to_vendor._fetch` 局部 stats 中未回流外层 runlog（`ok` 已修复，明细拆分待后续）
+- `tools/verify.py::check_derived` 只覆盖 `index_` 前缀 manifest，`etf_csindex_` 派生不在 verify 覆盖内（阶段F 前需补）
+
+---
+
 ## Phase 5/6 适配移植交接（2026-09-12）
 
 依据《quant-hub-合并方案》§2.4/§3.1/§9.5/§9.7/§10.2-10.4 将本地 Phase 5/6 工具适配到本仓真实 API 并接入 CI，全部已验证。
