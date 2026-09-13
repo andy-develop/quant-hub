@@ -13,8 +13,9 @@ fetch/bars_to_frame/derive_period/ingest_daily_increment，避免口径漂移。
   4. filter   交易日过滤（★ 幻影行根治，与 csindex 首载同款）
   5. gate     date_max 必须 = target_day（红 -> 中止不落盘，allow_stale 降级）
   6. write    write_incremental(etf,raw,当日) 幂等落 _incr/YYYYMMDD/raw.parquet
-  7. derive   重物化 weekly/monthly（覆盖 + manifest，derived_from.sha256 断言）
-  8. expire   顺手 expire_partitions(asset="etf", 2430 交易日) 删旧（Q5）
+  7. expire   顺手 expire_partitions(asset="etf", 2430 交易日) 删旧（Q5；同步 manifest）
+  8. derive   重物化 weekly/monthly（覆盖 + manifest）★ 在 expire 之后：
+             derived_from.sha256 = 当前 daily 指纹，先 expire 才能让派生指向「删旧后 daily」（R17）
   9. runlog   state/data/runlog/etf_incr_<asof>.json
 
 用法：
@@ -53,6 +54,24 @@ def _last_by_code(root: str, pd) -> dict:
     d = daily.copy()
     d["date"] = pd.to_datetime(d["date"])
     return {str(c): dd.date() for c, dd in d.groupby("code")["date"].max().items()}
+
+
+def _derive_all(codes, root, calendar, asof, writer, pd, logger=print) -> list:
+    """重派生 weekly/monthly（覆盖物化 + manifest）。
+
+    ★ 必须在 expire 之后执行：derived_from.sha256 = 当前 daily 指纹，若 expire
+    删了超出保留期的旧分区，daily 变小、指纹变化；derive 放最后才能让
+    派生物化与 manifest 一致指向「expire 后 daily」（R17 断言依赖此顺序）。
+    全部 5 code × 2 freq，帧很小，每次运行重派生成本可忽略。
+    """
+    derived = []
+    for code in codes:
+        for freq in DERIVED_FREQS:
+            man = derive_period(code, freq, root, calendar, asof, writer, pd)
+            derived.append(man)
+            logger(f"[derive] {code} {freq}: {man['rows']} 根（partial={man['partial_bars']}）"
+                   f" -> {man['path']}")
+    return derived
 
 
 def _fetch_incremental(code: str, start: _dt.date, end: _dt.date, *, logger=print) -> list:
@@ -99,6 +118,8 @@ def run(codes=CSINDEX_CODES, *, root="data", asof=None, writer="data-etf-incr",
                    "generated_at": _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=8))).isoformat(timespec="seconds")}
         if expire:
             _expire(root, target_day, writer, logger, summary)
+        # expire 可能删了滑动窗口边界的月分区 -> 重派生保 derived_from.sha256 一致
+        summary["derived"] = _derive_all(codes, root, calendar, asof, writer, pd, logger)
         return summary
 
     # ---- 1. 库内 date_max ----
@@ -128,6 +149,7 @@ def run(codes=CSINDEX_CODES, *, root="data", asof=None, writer="data-etf-incr",
                    "generated_at": _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=8))).isoformat(timespec="seconds")}
         if expire:
             _expire(root, target_day, writer, logger, summary)
+        summary["derived"] = _derive_all(codes, root, calendar, asof, writer, pd, logger)
         return summary
 
     daily_df = bars_to_frame(rows_by_code, pd)
@@ -161,16 +183,7 @@ def run(codes=CSINDEX_CODES, *, root="data", asof=None, writer="data-etf-incr",
         written.append(p)
         logger(f"[write] etf 增量 {len(g)} 行（{day}） -> {p}")
 
-    # ---- 6. 重派生 weekly/monthly（覆盖物化 + manifest） ----
-    derived = []
-    for code in codes:
-        for freq in DERIVED_FREQS:
-            man = derive_period(code, freq, root, calendar, asof, writer, pd)
-            derived.append(man)
-            logger(f"[derive] {code} {freq}: {man['rows']} 根（partial={man['partial_bars']}）"
-                   f" -> {man['path']}")
-
-    # ---- 7. 顺手 expire 删旧（Q5） ----
+    # ---- 6. 顺手 expire 删旧（Q5）★ 先于重派生：derived_from.sha256 覆盖 expire 后 daily ----
     summary = {"pipeline": "etf_incr", "asof": asof.isoformat(), "writer": writer,
                "asset": ASSET, "target_day": target_day.isoformat(),
                "increment_codes": sorted(rows_by_code),
@@ -178,11 +191,12 @@ def run(codes=CSINDEX_CODES, *, root="data", asof=None, writer="data-etf-incr",
                "rows_dropped_non_trading": n_dropped,
                "written_partitions": [os.path.relpath(p, root) for p in written],
                "freshness": {"level": level, **gate},
-               "derived": [{k: m[k] for k in ("code", "freq", "rows", "partial_bars", "path")}
-                           for m in derived],
                "generated_at": _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=8))).isoformat(timespec="seconds")}
     if expire:
         _expire(root, target_day, writer, logger, summary)
+
+    # ---- 7. 重派生 weekly/monthly（覆盖物化 + manifest）----
+    summary["derived"] = _derive_all(codes, root, calendar, asof, writer, pd, logger)
     return summary
 
 

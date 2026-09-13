@@ -279,6 +279,10 @@ def expire_partitions(
             ypath = os.path.join(base, year)
             if year.startswith("year=") and os.path.isdir(ypath) and not os.listdir(ypath):
                 shutil.rmtree(ypath, ignore_errors=True)
+        # manifest 对账：删掉指向不存在路径的分区条目（含本次删除 + 历史遗留僵尸），
+        # 否则 verify 报"分区路径不存在"僵尸条目
+        # （阶段 E-1 实测：etf_incr 09-13 顺手删旧后 etf_raw.json 残留 2013/07..2016/06）
+        _prune_manifest_missing(root, asset, fq)
 
     return {
         "asset": asset, "fq": fq, "keep_trade_days": keep_trade_days,
@@ -373,6 +377,22 @@ def _bump_manifest_dir(root, asset, fq, out_dir, rows, *, writer, sealed, pd):
     parts.append(part)
     man["partitions"] = sorted(parts, key=lambda x: x["path"])
     write_manifest(root, asset, fq, man)
+
+
+def _prune_manifest_missing(root: str, asset: str, fq: str) -> int:
+    """从 manifest 移除指向已不存在路径的分区条目（文件或目录皆可），返回移除条数。
+
+    expire 删掉整月分区后调用：同时清理本次删除和历史遗留僵尸条目，让 manifest
+    与磁盘保持一致（verify 的 check_manifests 依此判干净）。
+    """
+    man = read_manifest(root, asset, fq)
+    parts = man.get("partitions", []) or []
+    kept = [p for p in parts if not p.get("path") or os.path.exists(os.path.join(root, p["path"]))]
+    dropped = len(parts) - len(kept)
+    if dropped:
+        man["partitions"] = kept
+        write_manifest(root, asset, fq, man)
+    return dropped
 
 
 def assert_manifest_matches(root: str, asset: str, fq: str, partition_path: str,
