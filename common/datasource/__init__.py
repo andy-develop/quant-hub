@@ -339,6 +339,9 @@ def fetch_with_fallback(
             _log(logger, f"[L5] {v.name} 放弃"
                          f"（连续失败 {v.breaker.fails}/{v.breaker.threshold}）-> 切备源")
 
+    # ★ 合并仓遗留修复：FetchStats.ok 字段从未被赋值（runlog 恒显示 0）。
+    #   ok 语义 = 成功返回的记录数（每只 code 只被请求一次，rows 内无重复）。
+    stats.ok = len(rows)
     stats.missing_codes = todo
     if todo:
         _log(logger, f"[L1] {len(todo)} 只未取到，进 manifest.missing_codes，由 21:00 补跑补齐")
