@@ -36,18 +36,38 @@
 - quant-lab 检出自带的 `data/kline/fixup/raw_0_*.parquet`（28 只）是 **手单位 volume + 无 amount 列** 的旧格式；数据仓 raw 是 **股单位 + 真实 amount 全量**
 - 后果：`build_indicators` 的 `amt = amount.fillna(close*vol*100)` 大量走兜底近似，amt20 掺入手/股 100 倍量纲错乱 → 入口绝对阈值 `m5 = amt20 >= 3e7` 翻转 → 动量信号系统性分歧（legacy 87,245 vs shadow 81,961，trades 473 vs 459）
 - 修复：quant-lab 数据重建为数据仓口径（本地 src/quant-lab 与 /tmp 双检出均已物化重建，fixup 清空）。修复后双侧 payload **shadow_diff = PROMOTE-READY**（data_date/kpi/sha 逐位一致，台账 1/3）
-- **遗留：`andy-develop/quant-lab` 远端 data/ 仍为旧格式**——CI 主线（legacy 数据源直跑）用它时仍会与 shadow 分歧；需先把远端数据重建为数据仓口径（先修 bug 再取基线），或直接让主线也走数据仓（等于提前晋级）
+
+### quant-lab 远端数据重建（遗留闭环，2026-09-13，commit 1519177549）
+
+- **内容**：`andy-develop/quant-lab` 远端 `data/kline/fixup/` 56 个文件（28 只 × raw_0_/hfq_0_）由旧格式重建为**数据仓口径**——raw 8 列（股单位 volume + 真实 amount），hfq 6 列复权同步至 09-11；commit `1519177549`（"fix(data): 重建 28 只除权修复件为数据仓口径…"）推送 main（11220232 → 1519177549）
+- **前置补数**：数据仓先补 09-07..11 五日增量（raw/hfq `_incr/` 平铺），`reader.load` 全史至 09-11
+- **推送方式**：本地直连 GitHub 克隆/推送极慢（代理仅 curl 快），改用 `gh api` git blobs/trees/commits/refs 端点逐文件 base64 推送；blob tree 幂等，可复跑
+- **验证**：修复后本地严格 CI 模拟（legacy 直跑 vs 数据仓物化 shadow）→ `shadow_diff` 两域（momentum/blackbox）**全 PROMOTE-READY**（max_kpi_delta=0.0，指纹一致）；远端 fixup 内容抽查（raw_0_000672：8 列、09-07 vol=182821/amount=274550000；hfq_0_000672：6 列、895 行至 09-11）
+
+### ★ 增量单位缺陷修复（commit 1df2e6d7814a，2026-09-13，1519177549 假阳性闭环）
+
+- **缺陷**：commit 1519177549 重建 fixup 时**直接复用远端 `data/kline/incremental/raw_20260907..11`**——该批增量是**手单位 volume**（000672 09-07 = 182,821 手）；而数据仓 stock_incr 规范化为**股单位** `round(amount/close)` = 18,266,800。上一轮验证看到的「vol=182821」实为**两侧同用一份手单位增量**的同源假阳性——shadow_diff 逐位一致 ≠ 与数据仓一致
+- **修复**：按 `tools/data_pipeline/stock_migrate.py::to_contract_raw` 权威口径规范化（`volume_股 = round(amount/close)`、amount 取源值 >0）；fixup `raw_0_*` 增量段与 incremental raw 同步修正（5 文件 CHANGED），incremental/fixup 的 hfq 不动（blob sha 与远端原样一致）。commit `1df2e6d7814a` 推送 main（1519177549 → 1df2e6d7814a，fixup 56 + incremental 10，`gh api` git blobs/trees 幂等）
+- **重验（真一致）**：T3 端到端模拟——legacy 直跑（修正后 fixup+incremental）vs shadow 物化（--data-root 数据仓）→ K线 4,337,158 行逐位一致、信号 82,168、交易 474/875（动量）与 498/924（黑盒）；`shadow_diff` 两域全 **PROMOTE-READY**（max_kpi_delta=0.0，payload_sha 相同）；000672 09-07 两侧 vol 均为 **18,266,800**（真一致，非假阳性）
+
+### ★ base 沪市 600 前缀手单位损坏修复（commit dd2136008c22，2026-09-13，1df2e6d7814a 验证假阳性闭环 2 号）
+
+- **缺陷**：quant-lab base 沪市 `raw_b0_*`（600 前缀 2,060 只，2023-09-01~2026-09-04 共 729 行/只）是 **baostock 手单位旧格式**：volume=手、**amount=0 全线**（600519 2024-03-01 vol=26,868/amount=0）；深市 raw_b1_* 正常（000001 vol=182,810,290/amount=1,917,689,306）。本地数据仓 2024-03 的 600 前缀 10,473/97,543 行（10.7%）与 base **逐行相同**——本地数据仓分区（迁移时）被重建成了与 legacy 同源的损坏旧格式 → 此前「真一致」为**同源假阳性**；远端数据仓为正确股单位（600519 vol=2,686,800/amount=4,527,419,208）
+- **修复**：以远端数据仓为权威，本地全量下载远端 stock 分区（raw 891 + hfq 925 batch，`gh api git/blobs` base64 并行，github.com 443 被阻断走 api）→ `materialize_qlab --data-root /tmp/qhdata/data` 重建 base：`data/kline/` 22 片（raw/hfq 各 11）+ `data/meta/` 5 件，**删除旧顶层分片 + qfq（已弃用）+ raw_000 + fixup/（56）+ incremental/（10）**。commit `dd2136008c22` 推送 main（1df2e6d7814a → dd2136008c22）
+- **重建后**：raw 3,445,610 行/4,966 只、hfq 3,582,955 行/5,145 只；600519 2024-03-01 vol=2,686,800/amount=4,527,419,208（amount==0 归零）；index/bench/csi1000 从 2023-01-03 起（物化器读本地 index daily 封存，远端仓缺 daily 封存已用本地件补齐验证）
+- **数据范围收敛**：远端 stock raw 仅 2023-09 起（legacy 沪市同起点）；深市旧 base 2023-01 起 → 重建后两侧同 2023-09 起，engine 回测窗口由 flags_long 起点决定、两侧一致（2023-01~08 深市不补远端，不影响 shadow 一致性验证）
+- **F8 真一致重验**：本地严格 CI 模拟——legacy 直跑（重建 base）vs shadow 物化（--data-root /tmp/qhdata/data）→ K线 3,445,610/3,582,955 行、信号 78,297、交易 418/738 笔、KPI 完全一致 → `shadow_diff` **PROMOTE-READY**（max_kpi_delta=0.0，payload_sha 相同 `69a844d5cd7d0a08`，台账 1/3）
 
 ### 验证记录
 
-- shadow_diff：`quant-lab: data_date_equal=true / kpi_equal=true / sha_equal=true → PROMOTE-READY`（threshold=3，台账 1/3）
+- shadow_diff：`quant-lab: data_date_equal=true / kpi_equal=true / sha_equal=true → PROMOTE-READY`（threshold=3，台账 1/3；增量单位修复后重验仍全 PROMOTE-READY；base 重建后 F8 重验仍全 PROMOTE-READY）
 - pytest 分域全绿：合并层 **293 passed / 3 skipped** · shortterm 43 / 9 skip · etf 64 · selected 11（README 命令逐条执行）
 - 数据仓：hfq 有效截止 09-11（fixup 全史）、raw 止 09-04；回补后 hfq 2023-01-03 起
 
 ### 遗留事项
 
-- `andy-develop/quant-lab` 远端 data/kline 需重建为数据仓口径（见上）——须与 shadow 链首跑同批处理
-- shadow 链首次真实 CI 跑（workflow_dispatch run_shadow=true）待验证；本地端到端已过
+- ~~`andy-develop/quant-lab` 远端 data/kline 需重建为数据仓口径~~ → **已闭环（commit 1519177549 + 1df2e6d7814a + dd2136008c22，见上）**：远端 legacy 数据源现为数据仓口径（含增量单位缺陷修复 + base 沪市 600 前缀手单位修复），CI 主线直跑与 shadow 物化不再因 fixup/增量/600 前缀分歧
+- shadow 链首次真实 CI 跑（workflow_dispatch run_shadow=true）已 dispatch（run 34761446273，结果见下）；本地端到端已过
 - `_build_summary` 兼容 envelope dict 与 DomainPayload 对象两种形态（tests/tools/test_run_shortterm_summary 口径冻结）
 
 ---
