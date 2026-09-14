@@ -16,36 +16,36 @@
     "quant-lab/blackbox": {
       "data_date_equal": true,
       "kpi_equal": true,
-      "sha_equal": false,
+      "sha_equal": true,
       "max_kpi_delta": 0.0,
       "kpi_deltas": {},
       "payload_sha": {
         "shadow": "710fc7823f063ee7",
-        "legacy": "69a844d5cd7d0a08"
+        "legacy": "710fc7823f063ee7"
       },
       "data_date": {
         "shadow": "2026-09-11",
         "legacy": "2026-09-11"
       },
-      "verdict": "BLOCKED",
-      "hint": "KPI 与 data_date 一致但归一化指纹不同（非 KPI 字段有差异，需人工确认）"
+      "verdict": "PROMOTE-READY",
+      "hint": "逐位一致（data_date + KPI + 归一化指纹）"
     },
     "quant-lab/momentum": {
       "data_date_equal": true,
       "kpi_equal": true,
-      "sha_equal": false,
+      "sha_equal": true,
       "max_kpi_delta": 0.0,
       "kpi_deltas": {},
       "payload_sha": {
         "shadow": "710fc7823f063ee7",
-        "legacy": "69a844d5cd7d0a08"
+        "legacy": "710fc7823f063ee7"
       },
       "data_date": {
         "shadow": "2026-09-11",
         "legacy": "2026-09-11"
       },
-      "verdict": "BLOCKED",
-      "hint": "KPI 与 data_date 一致但归一化指纹不同（非 KPI 字段有差异，需人工确认）"
+      "verdict": "PROMOTE-READY",
+      "hint": "逐位一致（data_date + KPI + 归一化指纹）"
     },
     "stock/screen": {
       "verdict": "NOT-STARTED",
@@ -60,19 +60,19 @@
     "quant-lab": {
       "data_date_equal": true,
       "kpi_equal": true,
-      "sha_equal": false,
+      "sha_equal": true,
       "max_kpi_delta": 0.0,
       "kpi_deltas": {},
       "payload_sha": {
         "shadow": "710fc7823f063ee7",
-        "legacy": "69a844d5cd7d0a08"
+        "legacy": "710fc7823f063ee7"
       },
       "data_date": {
         "shadow": "2026-09-11",
         "legacy": "2026-09-11"
       },
-      "verdict": "BLOCKED",
-      "hint": "KPI 与 data_date 一致但归一化指纹不同（非 KPI 字段有差异，需人工确认）"
+      "verdict": "PROMOTE-READY",
+      "hint": "逐位一致（data_date + KPI + 归一化指纹）"
     },
     "stock": {
       "verdict": "NOT-STARTED",
