@@ -1,7 +1,7 @@
 {
  "domain": "quant-lab",
  "variant": "momentum",
- "generated_at": "2026-09-14T08:32:58+08:00",
+ "generated_at": "2026-09-14T23:55:03+08:00",
  "data_date": "2026-09-11",
  "schema_version": 1,
  "payload": {
@@ -9,7 +9,7 @@
    "on": {
     "mode": "on",
     "win_label": "回测全期",
-    "generated": "2026-09-14 00:32",
+    "generated": "2026-09-14 15:55",
     "last_day": "2026-09-11",
     "start_day": "2023-09-01",
     "dates": [
@@ -10021,7 +10021,7 @@
    "off": {
     "mode": "off",
     "win_label": "回测全期",
-    "generated": "2026-09-14 00:32",
+    "generated": "2026-09-14 15:55",
     "last_day": "2026-09-11",
     "start_day": "2023-09-01",
     "dates": [
