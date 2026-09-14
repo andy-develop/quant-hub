@@ -58,16 +58,45 @@
 - **数据范围收敛**：远端 stock raw 仅 2023-09 起（legacy 沪市同起点）；深市旧 base 2023-01 起 → 重建后两侧同 2023-09 起，engine 回测窗口由 flags_long 起点决定、两侧一致（2023-01~08 深市不补远端，不影响 shadow 一致性验证）
 - **F8 真一致重验**：本地严格 CI 模拟——legacy 直跑（重建 base）vs shadow 物化（--data-root /tmp/qhdata/data）→ K线 3,445,610/3,582,955 行、信号 78,297、交易 418/738 笔、KPI 完全一致 → `shadow_diff` **PROMOTE-READY**（max_kpi_delta=0.0，payload_sha 相同 `69a844d5cd7d0a08`，台账 1/3）
 
+### ★ shadow 真实 CI 首次跑通（2026-09-13：fixup 发现 + index daily 补充 + checkout ref 根因修复）
+
+#### 1. fixup 发现（dd2136008c22 假阳性闭环 3 号，commit 11a9bf8dd6ab 重推 base）
+
+- 远端数据仓存在 `data/market/stock/fixup/hfq_*.parquet` **28 只 hfq 覆盖件**，首次物化漏下载 → hfq 3,582,955 行 vs CI 预期 3,587,037（**差 4,082 行**）
+- 补下载后重物化对齐（raw 3,445,610 / hfq 3,587,037 / 信号 78,297 / 交易 431/750，payload_sha=`710fc7823f063ee7`）→ 重推 quant-lab base commit `11a9bf8dd6ab`（含 fixup）
+
+#### 2. index daily 封存补充（F11，远端数据仓 main → 5a6324940）
+
+- 物化器 `materialize_index_daily` 依赖 `market/index/*/{code}/daily/**/*.parquet` **封存布局**；远端只有 monthly/weekly + raw 平铺 → CI 首次 shadow 物化抛 `FileNotFoundError: no index daily data for sh000001`
+- 从本地上传 135 个 daily 封存（broad/sh000001 + tencent/sh000300/sh000852，`/tmp/data-index-push.py`，4 次重试退避）→ 远端补齐
+
+#### 3. CI 三次运行链（workflow_dispatch run_shadow=true）
+
+| run | 主线 | shadow | shadow_diff |
+|---|---|---|---|
+| 34761446273（14:01） | success | **失败**（index daily 缺失 → 上表 F11 修复） | — |
+| 34762610257（14:25） | success | success | **BLOCKED**（legacy=`69a844d5cd7d0a08` vs shadow=`710fc7823f063ee7`，KPI 全等） |
+| 34792840949（ref: main 修复后） | success | success | **PROMOTE-READY**（sha 两侧均 `710fc7823f063ee7`，max_kpi_delta=0.0） |
+
+#### 4. ★ BLOCKED 根因：shadow job checkout 默认 ref 陷阱（commit 8673ef9）
+
+- `shortterm-shadow` 第一步 `actions/checkout@v4` **无 ref** → 默认检出 **GITHUB_SHA（dispatch 时的提交）**，`state/payload` 还是主线 job 推送前的旧版本（run 3 旧 base dd2136008c22 的 payload，legacy=`69a844d5cd7d0a08`）；shadow 侧是新 base（`710fc7823f063ee7`）→ KPI 全等但归一化指纹不同 → **误报 BLOCKED**
+- 修复：该步显式 `ref: main`（步骤执行时解析 ref，`needs: shortterm` 保证主线已 push 完成），workflow 注释同步更正
+- 验证：run 34792840949 → quant-lab 域 `data_date/kpi/sha 逐位一致` → **PROMOTE-READY**；台账 `last_verdict=PROMOTE-READY`（09-11 已记过 BLOCKED，同交易日幂等不重复计数 → 下个新交易日 PROMOTE-READY 才计 1/3）
+
+
+
 ### 验证记录
 
-- shadow_diff：`quant-lab: data_date_equal=true / kpi_equal=true / sha_equal=true → PROMOTE-READY`（threshold=3，台账 1/3；增量单位修复后重验仍全 PROMOTE-READY；base 重建后 F8 重验仍全 PROMOTE-READY）
+- shadow_diff：`quant-lab: data_date_equal=true / kpi_equal=true / sha_equal=true → PROMOTE-READY`（threshold=3；增量单位修复后重验、base 重建后 F8 重验、真实 CI run 34792840949 均全 PROMOTE-READY；run 34762610257 BLOCKED 为 checkout ref 陷阱误报，commit 8673ef9 修复后根除）
 - pytest 分域全绿：合并层 **293 passed / 3 skipped** · shortterm 43 / 9 skip · etf 64 · selected 11（README 命令逐条执行）
 - 数据仓：hfq 有效截止 09-11（fixup 全史）、raw 止 09-04；回补后 hfq 2023-01-03 起
 
 ### 遗留事项
 
-- ~~`andy-develop/quant-lab` 远端 data/kline 需重建为数据仓口径~~ → **已闭环（commit 1519177549 + 1df2e6d7814a + dd2136008c22，见上）**：远端 legacy 数据源现为数据仓口径（含增量单位缺陷修复 + base 沪市 600 前缀手单位修复），CI 主线直跑与 shadow 物化不再因 fixup/增量/600 前缀分歧
-- shadow 链首次真实 CI 跑（workflow_dispatch run_shadow=true）已 dispatch（run 34761446273，结果见下）；本地端到端已过
+- ~~`andy-develop/quant-lab` 远端 data/kline 需重建为数据仓口径~~ → **已闭环（commit 1519177549 + 1df2e6d7814a + dd2136008c22 + 11a9bf8dd6ab，见上）**：远端 legacy 数据源现为数据仓口径（含增量单位缺陷修复 + base 沪市 600 前缀手单位修复 + fixup 覆盖件并入），CI 主线直跑与 shadow 物化不再因 fixup/增量/600 前缀分歧
+- ~~shadow 链首次真实 CI 跑~~ → **已闭环（2026-09-13）**：三次 dispatch（34761446273 shadow 失败 index daily → 34762610257 双 success 但 BLOCKED → 34792840949 **PROMOTE-READY**）。完整链见上「shadow 真实 CI 首次跑通」
+- 远端数据仓 **2023-01~08 深市 stock 不补**（重建后两侧同 2023-09 起，engine 回测窗口一致；不影响 shadow 一致性，可选）
 - `_build_summary` 兼容 envelope dict 与 DomainPayload 对象两种形态（tests/tools/test_run_shortterm_summary 口径冻结）
 
 ---
