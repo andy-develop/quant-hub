@@ -1,0 +1,9 @@
+{
+  "domain": "selected",
+  "run_date": "2026-09-14",
+  "trigger": "publish",
+  "stages": {
+    "forward_selected": 1
+  },
+  "updated_at": "2026-09-14T08:37:40+08:00"
+}
