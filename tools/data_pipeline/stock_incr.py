@@ -144,7 +144,11 @@ def fetch_snapshot(secids: list[str], *, logger=print):
 # 3. 除权检测 + ifzq 整段修复（hfq 后复权锚定）
 # ---------------------------------------------------------------------------
 def detect_dividends(snap, prev_raw: dict, *, logger=print) -> list[str]:
-    """快照昨收 vs 库内上一收盘 |Δ|>0.5% → div；超保险丝（>max(50, 0.3n)）中止。"""
+    """快照昨收 vs 库内上一收盘 |Δ|>0.5% → div；超保险丝（>max(50, 0.3n)）中止。
+
+    prev_raw 是 latest_closes 的返回值：{code: (date, close)}（build_ratio 同款）。
+    ★ 必须取元组第二元素 close，直接除元组会 TypeError（2026-09-14 起每天红 5 天的根因）。
+    """
     div = []
     for r in snap:
         code = r["code"]
@@ -152,7 +156,10 @@ def detect_dividends(snap, prev_raw: dict, *, logger=print) -> list[str]:
         pc = r.get("prev_close")
         if prev is None or not pc:
             continue
-        if abs(pc / prev - 1.0) > DIV_TOLERANCE:
+        prev_close = prev[1] if isinstance(prev, tuple) else prev
+        if not prev_close:
+            continue
+        if abs(pc / prev_close - 1.0) > DIV_TOLERANCE:
             div.append(code)
     fuse = max(DIV_FUSE_MAX, int(0.3 * len(snap)))
     if len(div) > fuse:

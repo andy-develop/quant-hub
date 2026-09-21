@@ -78,8 +78,11 @@ def fetch_csi_rows(code: str, start: str, end: str, *, retries: int = 6,
             with urllib.request.urlopen(req, timeout=40) as r:
                 j = json.loads(r.read().decode("utf-8"))
             rows = j.get("data") or []
-            if rows or start != CSI_START:
+            if rows:
                 return rows
+            # ★ 空返回也要重试：增量窗口（start != CSI_START）官网可能尚未发布/瞬时空，
+            #   原逻辑 `rows or start != CSI_START` 直接采信空 -> 把瞬时空误判成"该段无数据"，
+            #   导致整条链（gate 红）中止（2026-09-18 000300 单日空就是这种）。
             last = ValueError("empty rows")
         except Exception as e:  # noqa: BLE001
             last = e
@@ -198,9 +201,12 @@ def backfill_daily(df, root: str, writer: str, pd=None) -> int:
 
     得到 market/etf/raw/year=YYYY/month=MM/batch=NN.parquet 封存分区。
     幂等：write_incremental 同月同分片行数一致即跳过；seal 重跑覆盖同分区（同数据同字节）。
+    ★ 合并重建：与 index.backfill_daily 同款，写某月前先合并该月已存在的封存行 + _incr
+      残留，避免不同 run 抓不同 code 子集时整月覆盖抹掉其他 code（index 域已踩坑）。
     """
     pd = pd or _pd()
     from common.store.writer import write_incremental, seal_partition
+    from common.store.reader import read_partition_daily, clear_month_incr
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
     months = sorted(set(zip(df["date"].dt.year.tolist(), df["date"].dt.month.tolist())))
@@ -208,7 +214,12 @@ def backfill_daily(df, root: str, writer: str, pd=None) -> int:
         g = df[(df["date"].dt.year == y) & (df["date"].dt.month == m)]
         if g.empty:
             continue
+        existing = read_partition_daily("etf", FQ, int(y), int(m), root=root, pd=pd)
+        if existing is not None and not existing.empty:
+            g = pd.concat([existing, g], ignore_index=True)
+            g = g.drop_duplicates(subset=["code", "date"], keep="last")
         first = g["date"].min().strftime("%Y%m%d")
+        clear_month_incr("etf", FQ, int(y), int(m), root=root)
         write_incremental(g, "etf", FQ, first, root=root, writer=writer,
                           allow_overwrite=True, pd=pd)
         seal_partition("etf", FQ, int(y), int(m), root=root, writer=writer, pd=pd)

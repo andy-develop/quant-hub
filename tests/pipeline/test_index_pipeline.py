@@ -134,3 +134,35 @@ def test_verify_passes_on_prepared_data(prepared):
     root, *_ = prepared
     rc = V.main(["--data-root", root])
     assert rc == 0
+
+
+def test_backfill_merge_preserves_other_codes(tmp_path):
+    """回归（09-14 起每天红 5 天的根因）：整月覆盖重建会抹掉其他 code 的行。
+
+    backfill_daily 必须以「已存在行 + 新抓行」合并重建：不同 run 只抓各自 code 子集
+    （如 09-12 手动回补 sh000852、09-14 起只跑 BROAD）时，同月其他 code 必须保留。
+    """
+    root = str(tmp_path)
+    _write_calendar(os.path.join(root, "meta"))
+    asof = dt.date(2026, 9, 11)
+    IDX.run(IDX.BROAD, root=root, asof=asof, writer="test", offline=True)
+    n_before = len(load(asset="index", fq="raw", freq="daily", root=root))
+    codes_before = set(load(asset="index", fq="raw", freq="daily", root=root)["code"])
+    assert codes_before == {"000001", "399001"}
+
+    # 模拟 09-12 手动只回补 sh000852：单 code 全史帧 backfill 重建
+    days = pd.bdate_range("2026-07-01", "2026-09-11")
+    df = pd.DataFrame({
+        "code": "sh000852", "date": days,
+        "open": 3500.0, "high": 3501.0, "low": 3499.0, "close": 3500.5,
+        "volume": 1000, "amount": float("nan"),
+    })
+    IDX.backfill_daily(df, root, "test-subset")
+
+    d = load(asset="index", fq="raw", freq="daily", root=root)
+    codes = set(d["code"])
+    assert codes == {"000001", "399001", "000852"}, \
+        f"回补 sh000852 后 000001/399001 被抹掉: {codes}"
+    assert len(d) > n_before
+    # 合并后 daily 仍应满足不变量：无重复 (code,date)
+    assert d.duplicated(subset=["code", "date"]).sum() == 0

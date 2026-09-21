@@ -161,9 +161,14 @@ def backfill_daily(df, root: str, writer: str, pd=None) -> int:
 
     得到 market/index/raw/year=YYYY/month=MM/batch=NN.parquet 封存分区。
     幂等：write_incremental 同月同分片行数一致即跳过；seal 重跑覆盖同分区（同数据同字节）。
+    ★ 合并重建：写某月前先读该月已存在的封存行 + _incr 残留，与本次抓取行合并去重。
+      否则不同 run 只抓各自 code 子集时（如只回补 sh000852），整月覆盖会抹掉该月
+      其他 code 的行 —— 2026-09-14 起 data-index 只跑 BROAD 就把 09-12 回补的
+      sh000852 全抹掉，verify R17 连续红了 5 天。
     """
     pd = pd or _pd()
     from common.store.writer import write_incremental, seal_partition
+    from common.store.reader import read_partition_daily, clear_month_incr
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
     months = sorted(set(zip(df["date"].dt.year.tolist(), df["date"].dt.month.tolist())))
@@ -171,7 +176,12 @@ def backfill_daily(df, root: str, writer: str, pd=None) -> int:
         g = df[(df["date"].dt.year == y) & (df["date"].dt.month == m)]
         if g.empty:
             continue
+        existing = read_partition_daily("index", FQ, int(y), int(m), root=root, pd=pd)
+        if existing is not None and not existing.empty:
+            g = pd.concat([existing, g], ignore_index=True)
+            g = g.drop_duplicates(subset=["code", "date"], keep="last")
         first = g["date"].min().strftime("%Y%m%d")
+        clear_month_incr("index", FQ, int(y), int(m), root=root)
         write_incremental(g, "index", FQ, first, root=root, writer=writer,
                           allow_overwrite=True, pd=pd)
         seal_partition("index", FQ, int(y), int(m), root=root, writer=writer, pd=pd)

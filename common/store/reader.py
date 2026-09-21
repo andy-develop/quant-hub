@@ -445,6 +445,71 @@ def _incr_files(root: str) -> list[str]:
     return out
 
 
+def read_partition_daily(
+    asset: str,
+    fq: str,
+    year: int,
+    month: int,
+    *,
+    root: str | None = None,
+    pd=None,
+):
+    """读某月「封存分区 + 未封存 _incr 分片」的全部行（backfill 幂等合并用）。
+
+    backfill_daily 以整月重建语义重写分区时，必须以「已存在行 + 新抓行」合并后写入，
+    否则不同 run 只抓各自 code 子集会整月抹掉其他 code 的行
+    （2026-09-14 起 data-index 只跑 BROAD，把 09-12 手动回补的 sh000852 全抹掉的教训）。
+    返回 None 表示该月无任何数据。
+    """
+    root = root or os.environ.get("QH_DATA_ROOT", "data")
+    base = os.path.join(root, "market", asset, fq)
+    frames: list = []
+
+    mdir = os.path.join(base, f"year={year:04d}", f"month={month:02d}")
+    if os.path.isdir(mdir):
+        for f in sorted(glob.glob(os.path.join(mdir, "*.parquet"))):
+            frames.append(_read_parquet(f, None, pd))
+
+    inc = os.path.join(base, _INCR_DIR)
+    if os.path.isdir(inc):
+        pref = f"{year:04d}{month:02d}"
+        for d in sorted(os.listdir(inc)):
+            if not d.startswith(pref):
+                continue
+            dp = os.path.join(inc, d)
+            if os.path.isdir(dp):
+                for f in sorted(glob.glob(os.path.join(dp, "*.parquet"))):
+                    frames.append(_read_parquet(f, None, pd))
+
+    if not frames:
+        return None
+    df = pd.concat(frames, ignore_index=True)
+    df["code"] = df["code"].map(normalize_code)
+    df["date"] = pd.to_datetime(df["date"])
+    return df.sort_values(["code", "date"], kind="stable").reset_index(drop=True)
+
+
+def clear_month_incr(asset: str, fq: str, year: int, month: int, *, root: str | None = None) -> int:
+    """删除某月 `_incr/YYYYMM*` 残留日分片（backfill 封存前防重复合并）。
+
+    seal_partition 会把该月 _incr 下**所有**分片并入封存分区；backfill 合并重建时
+    若残留了上一轮/其他写入者的分片，会与已读入的封存行重复。先清再写，保证封存
+    内容 = 本轮合并结果（幂等：无残留时是 no-op）。
+    """
+    import shutil
+    root = root or os.environ.get("QH_DATA_ROOT", "data")
+    inc = os.path.join(root, "market", asset, fq, _INCR_DIR)
+    if not os.path.isdir(inc):
+        return 0
+    pref = f"{year:04d}{month:02d}"
+    removed = 0
+    for d in os.listdir(inc):
+        if d.startswith(pref):
+            shutil.rmtree(os.path.join(inc, d), ignore_errors=True)
+            removed += 1
+    return removed
+
+
 def _all_parquet(root: str) -> list[str]:
     return sorted(glob.glob(os.path.join(root, "**", "*.parquet"), recursive=True))
 
