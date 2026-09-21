@@ -495,7 +495,10 @@ def test_shell_css_has_no_leftover_token():
 
     assert "$" in SHELL_CSS, "用例前提失效：SHELL_CSS 已经没有任何令牌"
     css = _shell_css()
-    assert "$" not in css, f"有令牌没被替换: {re.findall(r'\\$\\w+', css)}"
+    # ⚠️ 不能把 re.findall(r"\$\w+", css) 直接写进 f-string —— 表达式内不允许反斜杠
+    # （PEP 701 到 3.12 才放开；仓里 CI 跑 3.11，写了就是 SyntaxError 收集期炸）
+    leftover = re.findall(r"\$\w+", css)
+    assert not leftover, f"有令牌没被替换: {leftover}"
 
 
 def test_shell_topbar_is_light_not_dark():

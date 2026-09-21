@@ -79,6 +79,11 @@
   → `conftest.py` 加 `sys.dont_write_bytecode = True`。
 - **`pytest.skip` 指向不存在的路径 = 真实测试从未跑过**：原用例在模板缺失时 skip，而那个路径
   本就不存在 → 三域真实模板测试一条都没跑、却一直显示全绿。已改为 `pytest.fail`。
+- **本机绿 ≠ CI 绿：解释器版本差异**。CI 跑 **Python 3.11**，本机是 **3.14**。一个 f-string
+  `f"{re.findall(r'\$\w+', css)}"`（表达式内含反斜杠）在 3.14 完全合法（PEP 701 于 3.12 放开），
+  在 3.11 是 **SyntaxError** —— 测试**连收集都没过**，`build-page` 因 `needs: test` 一并被卡。
+  **⚠️ `ast.parse(src, feature_version=(3,11))` 抓不到这个坑**（实测它照样返回通过）→
+  唯一可靠的 3.11 护栏是**真的用 3.11 跑一遍**，别再用 `feature_version` 自我安慰。
 
 ### 遗留事项
 
