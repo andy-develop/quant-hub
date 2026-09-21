@@ -710,12 +710,17 @@ def _promote_globals(css: str, domain: str) -> str:
     return _GLOBAL_BLOCK_RE.sub(_sub, css)
 
 
-def scope_html_fragment(html: str, domain: str, *, wrap: bool = True) -> str:
+def scope_html_fragment(html: str, domain: str, *,
+                        wrap: bool = True, rename: "set[str] | None" = None) -> str:
     """把一个域的整段 HTML（样式+结构）包进作用域容器。
 
     - 抽出 `<style>` 内容做选择器前缀化 + 全局块改写
-    - 把裸 `id="x"` 重命名为 `id="{domain}__x"` 并同步更新 JS 里的引用
+    - 把**跨域重名**的 `id="x"` 重命名为 `id="{domain}__x"` 并同步更新 JS 里的引用
     - 结构包进 `<div id="app-{domain}">`
+
+    rename : 需要加域前缀的 id 名集合（`build()` 跨三域算出的重名集合）。
+             不给（None）则重命名该片段的全部 id —— 那是本模块最早的行为，
+             只适合单域片段；三域合并必须传重名集合，理由见 `_namespace_ids`。
     """
     t = THEMES[domain]
     css_blocks = re.findall(r"<style[^>]*>(.*?)</style>", html, re.S)
@@ -725,7 +730,7 @@ def scope_html_fragment(html: str, domain: str, *, wrap: bool = True) -> str:
         unify_colors(scope_css(_promote_globals(c, domain), domain), domain)
         for c in css_blocks
     )
-    body = unify_colors(_namespace_ids(body, domain), domain)
+    body = unify_colors(_namespace_ids(body, domain, rename), domain)
 
     # ★ 顺序关键：theme_block 必须放在域样式**之后**。
     #   模板自己的 `:root{}` 被 _promote_globals 改写成 `#app-{d}{}`，与本模块的
@@ -750,11 +755,45 @@ def scope_html_body(body: str, domain: str) -> str:
 
 _ID_RE = re.compile(r'\bid="([\w-]+)"')
 
+# 「只是转发到 getElementById」的包装函数：`function $(id){return document.getElementById(id);}`
+# 或 `const el = id => document.getElementById(P + id);`。
+#   ⚠️ 必须要求函数体**紧跟** return（或直接就是 getElementById）：否则像 quant-lab 的
+#      `function initPage(P,...){ const el = id => document.getElementById(P+id); ... }`
+#      会被误判成包装函数，把它的调用点也一起改名。
+_WRAPPER_PATS = (
+    r'function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{\s*(?:return\s+)?document\.getElementById',
+    r'(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;=]*=>\s*document\.getElementById',
+)
 
-def _namespace_ids(html: str, domain: str) -> str:
-    """`id="sidebar"` -> `id="stock__sidebar"`，并同步 getElementById/querySelector。
 
-    etf 与 stock 都有 `id="sidebar"`，不重命名的话後者会抢到前者的节点。
+def fragment_ids(html: str) -> set[str]:
+    """片段里出现的全部 id 名 —— 供 `build()` 跨三域求重名集合。"""
+    return set(_ID_RE.findall(html))
+
+
+def _wrapper_funcs(html: str) -> set[str]:
+    """找出包装着 getElementById 的函数名（`$`、`el` 之类）。
+
+    调用点写的是裸字面量（`$("sidebar")`、`el('modeSw')`），并不是
+    `getElementById("sidebar")`，所以只改 getElementById 字面量的正则追不到。
+    """
+    names: set[str] = set()
+    for pat in _WRAPPER_PATS:
+        names.update(re.findall(pat, html))
+    return names
+
+
+def _namespace_ids(html: str, domain: str, rename: "set[str] | None" = None) -> str:
+    """`id="sidebar"` -> `id="stock__sidebar"`，并同步 JS 里的引用。
+
+    etf 与 stock 都有 `id="sidebar"`，不重命名的话后者会抢到前者的节点
+    （`getElementById` 只返回文档里第一个）。
+
+    rename : 要加前缀的 id 名集合；None = 本片段全部 id（单域片段的老行为）。
+             ★ 三域合并**必须**传跨域重名集合。全量前缀化会把只在本域出现的
+             id 也改掉，而 `el('x')` / `$('x')` 这类间接引用改不到位 ——
+             实测后果是那个脚本块整块中断，图表全空、区间切换与多张表失效
+             （quant-lab 的 `initPage('', …)`，stock 的 37 处 `$()`）。
 
     ★ 必须**先改 JS 引用再改 id 属性**：反过来的话 id 属性已带前缀，
       JS 引用那一轮又会把 `etf__sidebar` 再套一层 -> `etf__etf__sidebar`。
@@ -762,14 +801,24 @@ def _namespace_ids(html: str, domain: str) -> str:
     pfx = f"{domain}__"
 
     def _bump(name: str) -> str:
+        if rename is not None and name not in rename:
+            return name
         return name if name.startswith(pfx) else pfx + name
 
-    # 第一轮：JS 引用
+    # 第一轮：JS 直连引用 document.getElementById("x") / getElementById("x")
     html = re.sub(r'document\.getElementById\(\s*(["\'])([\w-]+)\1\s*\)',
                   lambda m: f'document.getElementById("{_bump(m.group(2))}")', html)
     html = re.sub(r'(getElementById\(\s*)(["\'])([\w-]+)\2',
                   lambda m: f'{m.group(1)}"{_bump(m.group(3))}"', html)
-    # 第二轮：id 属性
+    # 第二轮：包装函数实参 $("x") / el('x') —— 上面两条正则看不见这种写法
+    wrappers = _wrapper_funcs(html)
+    if wrappers:
+        call_re = re.compile(
+            r'(?<![\w$])(' + "|".join(
+                map(re.escape, sorted(wrappers, key=len, reverse=True))) +
+            r')\(\s*(["\'])([\w-]+)\2\s*\)')
+        html = call_re.sub(lambda m: f'{m.group(1)}("{_bump(m.group(3))}")', html)
+    # 第三轮：id 属性
     html = re.sub(r'\bid="([\w-]+)"',
                   lambda m: f'id="{_bump(m.group(1))}"', html)
     return html
