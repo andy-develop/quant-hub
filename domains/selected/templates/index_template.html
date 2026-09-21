@@ -31,7 +31,6 @@ button{font-family:inherit;cursor:pointer}
 .nav-item:hover{background:var(--card-2);color:var(--text)}
 .nav-item.active{background:var(--primary-light);color:var(--primary);border-left-color:var(--primary);font-weight:600}
 .nav-item .ico{width:18px;text-align:center;font-size:15px}
-.sidebar-footer{margin-top:auto;padding:16px 20px;border-top:1px solid var(--line);font-size:11px;color:var(--muted-2)}
 
 /* ===== 汉堡按钮 ===== */
 .hamburger{position:fixed;left:16px;bottom:20px;z-index:101;width:48px;height:48px;border-radius:50%;background:var(--primary);color:#fff;border:none;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(37,99,235,.35);font-size:20px;transition:transform .15s}
@@ -44,8 +43,6 @@ button{font-family:inherit;cursor:pointer}
 .header{background:var(--card);border-bottom:1px solid var(--line);padding:16px 32px;position:sticky;top:0;z-index:50}
 .header h1{font-size:22px;font-weight:700;display:flex;align-items:center;gap:10px}
 .header h1 .tag{font-size:12px;font-weight:500;background:var(--primary-light);color:var(--primary);padding:3px 10px;border-radius:20px}
-.header .meta{display:flex;gap:24px;margin-top:6px;font-size:12px;color:var(--muted-2);flex-wrap:wrap}
-.header .meta b{color:var(--muted);font-weight:600}
 
 .content{padding:24px 32px 60px;max-width:1400px}
 
@@ -209,9 +206,6 @@ button{font-family:inherit;cursor:pointer}
     <div class="group-label">关于</div>
     <div class="nav-item" data-view="about"><span class="ico">ⓘ</span>方案说明</div>
   </div>
-  <div class="sidebar-footer">
-    数据日期 2026-09-10<br>覆盖全 A 股 5180 只<br>不构成投资建议
-  </div>
 </nav>
 
 <!-- 汉堡按钮 -->
@@ -221,13 +215,6 @@ button{font-family:inherit;cursor:pointer}
 <div class="main" id="main">
   <div class="header">
     <h1>个性化因子选股 <span class="tag" id="headerTag">智能选股引擎</span></h1>
-    <div class="meta">
-      <span><b>数据日期</b> /*__DATA_DATE__*/</span>
-      <span><b>生成时间</b> <span id="genTime">/*__GEN_TIME__*/</span></span>
-      <span><b>覆盖</b> 全 A 股 5180 只</span>
-      <span><b>策略版本</b> v1.0</span>
-      <span><b>实现依据</b> 《AI选股——个性化因子选股》</span>
-    </div>
   </div>
 
   <div class="content">
@@ -1000,8 +987,6 @@ function renderBacktest(){
 
 /* ===== 初始化 ===== */
 function init(){
-  var now=new Date();
-  $("genTime").textContent=("0"+now.getHours()).slice(-2)+":"+("0"+now.getMinutes()).slice(-2);
   initRadar();
   renderWatch();
   recompute(false);
