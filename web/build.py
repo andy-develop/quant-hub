@@ -22,10 +22,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from web.shell.scope import (  # noqa: E402
-    CHIP, CHIP_HOVER, CHIP_ON, PALETTE, THEMES, decl, scope_html_fragment,
+    CHIP, CHIP_HOVER, CHIP_ON, PALETTE, THEMES, decl, fragment_ids,
+    scope_html_fragment,
 )
 
-__all__ = ["build", "SHELL_CSS", "NAV", "DOMAINS", "inject_payloads"]
+__all__ = ["build", "SHELL_CSS", "NAV", "DOMAINS", "inject_payloads",
+           "duplicate_ids"]
 
 # 一级导航（域级）
 NAV = [
@@ -296,6 +298,22 @@ CDN_ECHARTS_LOADER_RE = re.compile(
     r'[\s\S]*?<\/script>')
 
 
+def duplicate_ids(fragments: dict[str, str]) -> set[str]:
+    """跨片段重名的 id 名集合（本仓实测 = `{"sidebar"}`）。
+
+    只有这些 id 需要加域前缀：两个同名节点同时进一个文档时，
+    `getElementById` 只返回第一个，后一个域会拿到别人的节点。
+
+    只在本域出现的 id **保持原名** —— 少改一处就少一处可能漏。
+    全量前缀化的教训见 `_namespace_ids`。
+    """
+    seen: dict[str, int] = {}
+    for html in fragments.values():
+        for name in fragment_ids(html):
+            seen[name] = seen.get(name, 0) + 1
+    return {name for name, n in seen.items() if n > 1}
+
+
 def build(src_root: str, out_path: str, *, health: dict | None = None,
           echarts_inline: bool = True, payload_dir: str | None = None) -> str:
     """合成单页壳。
@@ -315,17 +333,21 @@ def build(src_root: str, out_path: str, *, health: dict | None = None,
     # ---- 域 1：短线策略（模板内嵌在 build_report.py）----
     ql = _extract_from_report_py(os.path.join(_base(src_root, "quant-lab"), "scripts/build_report.py"))
     ql = inject_payloads(ql, "quant-lab", envelopes)
-    frags["quant-lab"] = scope_html_fragment(ql, "quant-lab")
 
     # ---- 域 2：ETF 策略 ----
     etf = _read(os.path.join(_base(src_root, "red-dividend-strategy"), "index_template.html"))
     etf = inject_payloads(etf, "etf", envelopes)
-    frags["etf"] = scope_html_fragment(etf, "etf")
 
     # ---- 域 3：个性化选股 ----
     stk = _read(os.path.join(_base(src_root, "stock-factor-engine"), "templates/index_template.html"))
     stk = inject_payloads(stk, "stock", envelopes)
-    frags["stock"] = scope_html_fragment(stk, "stock")
+
+    # ★ 只给**跨域重名**的 id 加域前缀（本仓 = `sidebar`，etf 与 stock 各有一个）。
+    #   所以必须先收齐三域原始片段、算出重名集合，再逐个作用域化。
+    raw = {"quant-lab": ql, "etf": etf, "stock": stk}
+    dup = duplicate_ids(raw)
+    for k, frag in raw.items():
+        frags[k] = scope_html_fragment(frag, k, rename=dup)
 
     # ★ ECharts 三个域都依赖，作为全局资源提到 head，只放一份
     #   （模板里的 CDN / document.write 兜底 loader 都要清掉，否则发布出去会去拉外网）
