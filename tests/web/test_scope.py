@@ -22,6 +22,7 @@ from web.shell.scope import (
     PALETTE,
     THEMES,
     component_css,
+    fragment_ids,
     nav_media_css,
     scope_css,
     scope_html_fragment,
@@ -193,6 +194,105 @@ def test_two_domains_sidebar_do_not_collide():
     ia = re.search(r'id="([\w-]+)"', a).group(1)
     ib = re.search(r'id="([\w-]+)"', b).group(1)
     assert ia != ib, "两域的 sidebar 未隔离"
+
+
+# ---- ★ 2026-09 线上故障回归：全量前缀化把包装函数引用改漏了 ----
+#   根因：`_namespace_ids` 原本给**所有** id 加域前缀，但只重写
+#   `getElementById("字面量")`；`el('x')` / `$('x')` 这种间接引用改不到
+#   -> 脚本块整块中断，两个域的图表全空、区间切换与多张表失效。
+#   修法：收窄到跨域重名集合 + 补一轮包装函数实参改名。
+
+
+def test_fragment_ids_collects_ids():
+    assert fragment_ids('<i id="a"></i><b id="b"></b>') == {"a", "b"}
+    assert fragment_ids("<div>x</div>") == set()
+
+
+def test_rename_only_touches_duplicates():
+    """★ 只在本域出现的 id 必须保持原名（这就是故障根因）。"""
+    frag = ('<div id="sidebar"></div><div id="unique"></div>'
+            '<script>var a=document.getElementById("sidebar");'
+            'var b=document.getElementById("unique");</script>')
+    out = scope_html_fragment(frag, "stock", wrap=False, rename={"sidebar"})
+    assert f'id={Q}stock__sidebar{Q}' in out
+    assert f'id={Q}unique{Q}' in out, "非重名 id 被改名了 -> 引用必然断裂"
+    assert "stock__unique" not in out
+    assert f'getElementById({Q}stock__sidebar{Q})' in out
+    assert f'getElementById({Q}unique{Q})' in out
+
+
+def test_wrapper_call_args_renamed():
+    """`$("sidebar")` 不是 `getElementById("sidebar")` 字面量，要单独一轮才追得到。"""
+    frag = ('<nav id="sidebar"></nav>'
+            '<script>function $(id){return document.getElementById(id);}'
+            '$("sidebar").classList.toggle("show");</script>')
+    out = scope_html_fragment(frag, "stock", wrap=False, rename={"sidebar"})
+    assert f'$({Q}stock__sidebar{Q})' in out, "包装函数实参没跟着改名"
+    assert f'$({Q}sidebar{Q})' not in out
+
+
+def test_arrow_wrapper_detected_but_not_enclosing_function():
+    """★ 只认「体内直接 return getElementById」的转发函数。
+
+    quant-lab 的 `initPage` 体内也出现 getElementById，但它是普通函数，
+    名字不能被当成包装函数（否则会把 `initPage('bb_' …)` 的字符串也改名）。
+    """
+    frag = ("<script>function initPage(P){ const el = id => document.getElementById(P + id);"
+            " el('modeSw'); } initPage('bb_');</script>")
+    out = scope_html_fragment(frag, "quant-lab", wrap=False, rename={"modeSw"})
+    assert f"el({Q}quant-lab__modeSw{Q})" in out, "箭头包装函数未被识别"
+    # 未被触碰的文本保留原单引号 —— 这正是「没被误判」的证据
+    assert "initPage('bb_')" in out, "普通函数被误判成包装函数"
+    assert "initPage__" not in out and f"initPage({Q}bb_{Q})" not in out
+
+
+def test_default_rename_is_backward_compatible():
+    """rename 不给 = 老行为（单域片段：全部 id 加前缀），既有调用方不受影响。"""
+    out = scope_html_fragment('<div id="anything"></div>', "etf", wrap=False)
+    assert f'id={Q}etf__anything{Q}' in out
+
+
+@pytest.mark.parametrize("domain", _DOMAINS)
+def test_real_templates_only_sidebar_collides(domain):
+    """真实模板实测：跨三域重名的 id 只有 `sidebar`（etf 与 stock 各一个）。"""
+    from web.build import duplicate_ids
+
+    frags = {}
+    for d in _DOMAINS:
+        tmpl = _load_template(d)
+        if tmpl is None:
+            pytest.fail("模板源不可用 —— 这条测试实际上没跑")
+        frags[d] = tmpl
+    assert duplicate_ids(frags) == {"sidebar"}, "跨域重名集合变了，需重审改名范围"
+
+
+def test_real_templates_produce_no_duplicate_id():
+    """★ 端到端：三域合并后 id 必须全局唯一，且每个引用都指向存在的 id。
+
+    这条同时守住两个方向：改名不足（重名 -> getElementById 抢到别人的节点）
+    与改名过度（引用断裂 -> 脚本块中断）。
+    """
+    from web.build import duplicate_ids
+
+    frags = {}
+    for d in _DOMAINS:
+        tmpl = _load_template(d)
+        if tmpl is None:
+            pytest.fail("模板源不可用 —— 这条测试实际上没跑")
+        frags[d] = tmpl
+    dup = duplicate_ids(frags)
+    doc = "\n".join(scope_html_fragment(frags[d], d, wrap=False, rename=dup)
+                    for d in _DOMAINS)
+
+    ids = re.findall(r'\bid="([\w-]+)"', doc)
+    repeated = sorted({i for i in ids if ids.count(i) > 1})
+    assert not repeated, f"合并后仍有重名 id（会在浏览器里互相抢）: {repeated}"
+
+    have = set(ids)
+    ref = re.compile(r'(?:getElementById|(?<![\w$.])\$|(?<![\w$.])el)'
+                     r'\(\s*["\']([\w-]+)["\']\s*\)')
+    missing = sorted({m for m in ref.findall(doc) if m not in have})
+    assert not missing, f"引用了不存在的 id（脚本会中断）: {missing}"
 
 
 def test_fragment_wrapped_in_scope_root():
