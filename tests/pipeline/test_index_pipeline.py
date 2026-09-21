@@ -166,3 +166,37 @@ def test_backfill_merge_preserves_other_codes(tmp_path):
     assert len(d) > n_before
     # 合并后 daily 仍应满足不变量：无重复 (code,date)
     assert d.duplicated(subset=["code", "date"]).sum() == 0
+
+
+def test_backfill_merge_dedups_prefixed_overlap(tmp_path):
+    """回归（2026-09-21 恢复 run 实测踩中）：抓取帧带前缀（sh000001）与封存短码
+    （000001）重叠时必须先归一再 dedup，否则同 (code,date) 双份进封存。
+
+    恢复 run 传 codes=sh000001,sz399001,sh000852，bars_to_frame 保留前缀 code；
+    封存分区是短码。合并若直接 drop_duplicates，'sh000001' != '000001' 判成不同键
+    -> 封存出现重复行，verify 不变量红。
+    """
+    root = str(tmp_path)
+    _write_calendar(os.path.join(root, "meta"))
+    asof = dt.date(2026, 9, 11)
+    IDX.run(IDX.BROAD, root=root, asof=asof, writer="test", offline=True)
+    n_before = len(load(asset="index", fq="raw", freq="daily", root=root))
+
+    # 模拟恢复 run：带前缀的全史帧（BROAD 重叠 + 新增 sh000852）
+    days = pd.bdate_range("2026-07-01", "2026-09-11")
+    frames = []
+    for i, code in enumerate(("sh000001", "sz399001", "sh000852")):
+        frames.append(pd.DataFrame({
+            "code": code, "date": days,
+            "open": 3000.0 + i, "high": 3001.0 + i, "low": 2999.0 + i,
+            "close": 3000.5 + i, "volume": 1000, "amount": float("nan"),
+        }))
+    IDX.backfill_daily(pd.concat(frames, ignore_index=True), root, "test-full")
+
+    d = load(asset="index", fq="raw", freq="daily", root=root)
+    assert set(d["code"]) == {"000001", "399001", "000852"}, \
+        f"恢复 run 后 code 集合异常: {sorted(set(d['code']))}"
+    assert d.duplicated(subset=["code", "date"]).sum() == 0, \
+        f"合并重建引入重复 (code,date): {d[d.duplicated(subset=['code','date'])]}"
+    # 行数 = 重叠部分去重 + 新增 000852（不得膨胀为双份）
+    assert len(d) == n_before + len(days)

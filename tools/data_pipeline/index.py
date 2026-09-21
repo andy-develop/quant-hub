@@ -168,9 +168,13 @@ def backfill_daily(df, root: str, writer: str, pd=None) -> int:
     """
     pd = pd or _pd()
     from common.store.writer import write_incremental, seal_partition
-    from common.store.reader import read_partition_daily, clear_month_incr
+    from common.store.reader import read_partition_daily, clear_month_incr, normalize_code
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
+    # ★ 必须先归一 code：抓取帧带前缀（sh000001），封存分区是短码（000001）。
+    #   不归一直接 drop_duplicates 会把"sh000001 vs 000001"当不同键 -> 同 (code,date)
+    #   双份进封存（verify 不变量红，2026-09-21 恢复 run 实测踩中）。
+    df["code"] = df["code"].map(normalize_code)
     months = sorted(set(zip(df["date"].dt.year.tolist(), df["date"].dt.month.tolist())))
     for (y, m) in months:
         g = df[(df["date"].dt.year == y) & (df["date"].dt.month == m)]

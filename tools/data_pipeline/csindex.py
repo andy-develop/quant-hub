@@ -206,9 +206,11 @@ def backfill_daily(df, root: str, writer: str, pd=None) -> int:
     """
     pd = pd or _pd()
     from common.store.writer import write_incremental, seal_partition
-    from common.store.reader import read_partition_daily, clear_month_incr
+    from common.store.reader import read_partition_daily, clear_month_incr, normalize_code
     df = df.copy()
     df["date"] = pd.to_datetime(df["date"])
+    # ★ 与 index.backfill_daily 同款：先归一 code 再合并去重（幂等，防御带前缀入参）
+    df["code"] = df["code"].map(normalize_code)
     months = sorted(set(zip(df["date"].dt.year.tolist(), df["date"].dt.month.tolist())))
     for (y, m) in months:
         g = df[(df["date"].dt.year == y) & (df["date"].dt.month == m)]
