@@ -23,19 +23,38 @@
 
 1. **CSS 选择器加前缀**：`.card{}` -> `#app-{domain} .card{}`
    纯 CSS 层解决，零运行时开销。
-2. **涨跌色显式重绑**：三域的 `--up/--down` 语义不一致，必须逐域写死。
+2. **主题变量显式声明**：三域各自的 `--up/--down/--bg/--ink…` 在这里统一写死，
+   绝不依赖继承（不写就会继承到上一个域的值）。
 
-### ★ 涨跌色颠倒（方案 §5.2 已证实）
+### ★ 视觉风格：全站统一（2026-09 起）
 
-| 域 | `--up` | `--down` |
-|----|--------|----------|
-| 短线策略 | `#D5423E` 红 | `#1D9E75` 绿 |
-| ETF 策略 | `#E0443C` 红 | `#16A34A` 绿 |
-| **个性化选股** | **`#16A34A` 绿** | **`#DC2626` 红** |
+早期版本**刻意保留**各域原值（个性化选股沿用美股惯例、绿涨红跌）。现在改为
+**全站统一**——配色令牌、字号、容器宽度、卡片处理、涨跌色全部一致。
 
-前两域是中国惯例（红涨绿跌），第三域沿用了美股惯例。硬把三域统一会在
-个性化选股里把**所有涨跌颜色翻译反**——用户看到的"涨"变成绿色。
-本模块的做法：**保留各域自身颜色**，只在 shell 层显式声明，绝不隐式继承。
+| 令牌 | 三域统一值 |
+|------|-----------|
+| `--up` / `--down` | `#D5423E` 红 / `#1D9E75` 绿（**红涨绿跌**） |
+| `--bg` / `--card` / `--line` | `#F6F6F4` / `#FFFFFF` / `#E4E3DC` |
+| `--ink` / `--ink2` / `--muted` | `#26251F` / `#3D3C34` / `#88867E` |
+| `--primary`(`--blue`) / `--primary-light` | `#185FA5` / `#E6F1FB` |
+| `--accent`(`--warn`) | `#854F0B` |
+| `--radius` / `--shadow` | `14px` / `none` |
+
+⚠️ **个性化选股的涨跌语义因此反转**（原来绿=涨，现在红=涨）。这一步成立的前提是：
+该域所有涨跌着色都走 `var(--up)` / `var(--down)`（实测 CSS 里 7+7 处，
+JS 拼 HTML 的字符串也写 `var(--up)`），**没有任何地方硬编码红绿**——所以改变量
+即可整域翻向。**将来该域若新增硬编码的 `#16A34A`/`#DC2626` 着色，翻向就会只翻
+一半**（CSS 走变量、JS 写死），务必一律走变量。
+
+### 令牌从哪来
+
+- 统一值集中在模块顶部的 [`PALETTE`](#)（唯一真相源），`theme_block()` 为**每个域**
+  生成同一份变量块。
+- 三域模板自己 `:root{}` 里写的原值**不去改模板**：作用域化后它与本模块的块
+  同优先级，靠文档顺序覆盖 —— 所以 `scope_html_fragment()` 把 `theme_block()`
+  生成在**域样式之后**（改这里前先读那条注释）。
+- 模板里写死在选择器 / JS 里的十六进制色（不走变量）由 `unify_colors()` 按
+  [`UNIFY_MAP`](#) 统一替换。
 """
 
 from __future__ import annotations
@@ -46,57 +65,146 @@ from dataclasses import dataclass, field
 __all__ = [
     "DomainTheme",
     "THEMES",
+    "PALETTE",
+    "UNIFY_MAP",
+    "COMPONENTS",
+    "NAV_MEDIA",
+    "CHIP",
+    "CHIP_ON",
+    "decl",
+    "unify_colors",
     "scope_css",
     "scope_html_fragment",
     "scope_id",
     "theme_block",
+    "component_css",
 ]
 
 # ---------------------------------------------------------------------------
-# 逐域主题（★ 颜色为各域模板实测原值，不得"统一"）
+# ★ 统一调色板（唯一真相源）—— 三域共用同一份令牌，改这里即改全站观感
+# ---------------------------------------------------------------------------
+# 键是**三域模板出现过的全部变量名并集**（20 个）。不同域命名不同（etf 用
+# --blue、stock 用 --primary、quant-lab 用 --muted…），全部一起发出去，
+# 各域取自己认得的那些，多余的没人用、无害。
+#
+# ⚠️ 改色只改这里。模板里 `:root{}` 写的原值会被本模块的块覆盖（见
+#    scope_html_fragment 的顺序注释）；写死在选择器/JS 里的十六进制色由
+#    UNIFY_MAP 兜底。
+PALETTE: dict[str, str] = {
+    # 底 / 卡片
+    "--bg": "#F6F6F4",
+    "--card": "#FFFFFF",
+    "--card-2": "#FAFAF7",
+    # 文字三档
+    "--ink": "#26251F",
+    "--ink2": "#3D3C34",
+    "--text": "#26251F",          # stock 的正文变量名
+    "--muted": "#88867E",
+    "--sub": "#88867E",
+    "--dim": "#A9A79E",
+    "--muted-2": "#A9A79E",
+    # 描边
+    "--line": "#E4E3DC",
+    # 强调色
+    "--primary": "#185FA5",
+    "--blue": "#185FA5",
+    "--primary-light": "#E6F1FB",
+    "--accent": "#854F0B",
+    "--warn": "#854F0B",
+    "--amber": "#854F0B",
+    "--purple": "#534AB7",
+    # ★ 涨跌：全站统一中国惯例（红涨绿跌）
+    "--up": "#D5423E",
+    "--down": "#1D9E75",
+    # 形状
+    "--radius": "14px",
+    "--shadow": "none",
+    "--num": '-apple-system,"PingFang SC","Helvetica Neue",sans-serif',
+}
+
+
+# ---------------------------------------------------------------------------
+# 逐域隔离信息
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DomainTheme:
-    """一个域的隔离信息。"""
+    """一个域的隔离信息。
+
+    配色不在这里 —— 三域已统一，颜色只认 PALETTE（见上）。这里只留
+    「哪个域对应哪个作用域根」这件真正逐域不同的事。
+    """
 
     key: str                 # 域标识：quant-lab / etf / stock
     root_id: str             # 作用域根元素 id
-    up: str                  # 涨色（各域原值）
-    down: str                # 跌色（各域原值）
-    bg: str
-    card: str
-    ink: str
-    line: str
-    # 该域把涨跌色用在哪些变量名上（不同域命名不同，需要全部重绑）
-    extra_vars: dict = field(default_factory=dict)
 
 
 THEMES: dict[str, DomainTheme] = {
-    # 短线策略（quant-lab）—— 中国惯例
-    "quant-lab": DomainTheme(
-        key="quant-lab", root_id="app-quant-lab",
-        up="#D5423E", down="#1D9E75",
-        bg="#F6F6F4", card="#FFFFFF", ink="#26251F", line="#E4E3DC",
-    ),
-    # ETF 策略（red-dividend-strategy）—— 中国惯例
-    "etf": DomainTheme(
-        key="etf", root_id="app-etf",
-        up="#E0443C", down="#16A34A",
-        bg="#F6FAFE", card="#FFFFFF", ink="#16324F", line="#DDE8F4",
-        extra_vars={"--ink2": "#2B4A6F", "--sub": "#5B7BA3",
-                    "--dim": "#8AA3C0", "--blue": "#2B6CB0"},
-    ),
-    # ★ 个性化选股（stock-factor-engine）—— 涨跌色颠倒，保留原样
-    "stock": DomainTheme(
-        key="stock", root_id="app-stock",
-        up="#16A34A", down="#DC2626",   # ★ 绿涨红跌，与另两域相反
-        bg="#F4F6FB", card="#FFFFFF", ink="#1A2040", line="#E2E6F0",
-        extra_vars={"--card-2": "#EEF1F8", "--primary": "#2563EB",
-                    "--primary-light": "#EFF4FF", "--accent": "#D97706",
-                    "--text": "#1A2040", "--muted": "#5A6480",
-                    "--muted-2": "#8B93A8"},
-    ),
+    "quant-lab": DomainTheme(key="quant-lab", root_id="app-quant-lab"),
+    "etf": DomainTheme(key="etf", root_id="app-etf"),
+    "stock": DomainTheme(key="stock", root_id="app-stock"),
 }
+
+
+# ---------------------------------------------------------------------------
+# ★ 硬编码色统一：模板里写死在选择器 / JS 里的十六进制色不走变量，只能按值替换
+# ---------------------------------------------------------------------------
+# 覆盖范围（在 scope_html_fragment 里对「整段片段」生效，所以 CSS 与 JS 一起改）：
+#   - 冷色中性调（etf/stock 的蓝白底、藏青正文、蓝灰描边）→ 基准暖中性调
+#   - 强调蓝（#2B6CB0 / #2563EB）→ #185FA5
+#   - 琥珀警示 → #854F0B
+#   - 涨跌色相 → 统一到 PALETTE 的 --up/--down
+#   - 弹窗遮罩 / 阴影的藏青 → 暖黑
+#
+# ⚠️ 这是**按字面量**替换，上游改了色值写法（大小写、压缩掉空格等）就会静默落空：
+#    表现=样式回退、不报错。改模板配色后请顺手核对这里。
+# ⚠️ 不含「数据系列色」（选股雷达图、回测曲线的推荐组合/沪深300 等）：那些是
+#    数据语义、不是观感，统一会让不同曲线分不开。
+UNIFY_MAP: tuple[tuple[str, str], ...] = (
+    # 浅底 → 基准中性浅底
+    ("#F6FAFE", "#FAFAF7"), ("#F0F6FD", "#FAFAF7"), ("#F0F7FE", "#FAFAF7"),
+    ("#EAF2FB", "#FAFAF7"), ("#F8FBFE", "#FAFAF7"), ("#EEF4FA", "#FAFAF7"),
+    ("#EFF4FF", "#FAFAF7"), ("#F4F6FB", "#F6F6F4"), ("#EEF1F8", "#FAFAF7"),
+    # 描边（冷蓝灰 → 暖灰）
+    ("#DDE8F4", "#E4E3DC"), ("#E2E6F0", "#E4E3DC"), ("#D1D5DB", "#E4E3DC"),
+    # 次级文字 / 坐标轴（多写在图表 JS 里，CSS 够不着）
+    ("#8AA3C0", "#88867E"), ("#5B7BA3", "#88867E"), ("#5A6480", "#88867E"),
+    ("#8B93A8", "#88867E"), ("#6B7280", "#88867E"),
+    ("#374151", "#3D3C34"), ("#2B4A6F", "#3D3C34"),
+    # 正文（藏青 → 暖黑）
+    ("#16324F", "#26251F"), ("#1A2040", "#26251F"),
+    # 强调蓝
+    ("#2B6CB0", "#185FA5"), ("#2563EB", "#185FA5"), ("#1D4ED8", "#185FA5"),
+    ("#DBEAFE", "#E6F1FB"),
+    ("rgba(43,108,176,", "rgba(24,95,165,"), ("rgba(37,99,235,", "rgba(24,95,165,"),
+    # 基准线（金色虚线 → 调色板里的金）
+    ("#8A6D3B", "#B07A2A"),
+    # 琥珀警示
+    ("#D97706", "#854F0B"), ("#B45309", "#854F0B"), ("#78350F", "#633806"),
+    ("#FBBF24", "#EF9F27"), ("#FCD9B6", "#FAEEDA"),
+    # 涨跌色相（同色系对齐，方向由 PALETTE 的 --up/--down 决定）
+    ("#E0443C", "#D5423E"), ("#C0392B", "#D5423E"),
+    ("#16A34A", "#1D9E75"), ("#177245", "#0F6E56"), ("#F0F9F2", "#E1F5EE"),
+    # 弹窗遮罩 / 阴影（藏青 → 暖黑）
+    ("rgba(30,41,80,", "rgba(38,37,31,"),
+)
+
+# 逐域单独替换（stock 的 #DC2626 是它的**跌**色：PALETTE 里跌色是绿的，
+# 所以只在 stock 段把它映射成红——即「跌」→ 红，完成红涨绿跌的翻向）。
+UNIFY_MAP_BY_DOMAIN: dict[str, tuple[tuple[str, str], ...]] = {
+    "stock": (("#DC2626", "#D5423E"),),
+}
+
+
+def unify_colors(text: str, domain: str = "") -> str:
+    """把模板里写死的十六进制色替换为统一调色板的等值色。
+
+    domain : 给了就额外套用该域的专属映射（见 UNIFY_MAP_BY_DOMAIN）。
+    """
+    for old, new in UNIFY_MAP:
+        text = text.replace(old, new)
+    for old, new in UNIFY_MAP_BY_DOMAIN.get(domain, ()):
+        text = text.replace(old, new)
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -296,25 +404,285 @@ def _split_selectors_naive(sel: str, root: str, *, wrap: bool) -> str:  # pragma
 
 
 # ---------------------------------------------------------------------------
-# 主题变量块：显式冻结各域的颜色语义
+# 主题变量块：三域发同一份统一令牌
 # ---------------------------------------------------------------------------
 def theme_block(domain: str, *, extra_scope: bool = True) -> str:
-    """生成该域的作用域变量块。
+    """生成该作用域的统一令牌块。
 
-    ★ 关键是 `--up/--down` 显式写死：不写的话会继承到 shell 或上一个域的值，
-      个性化选股的涨跌色就会被"统一"掉，所有颜色翻译反。
+    ★ 三域内容完全相同（都来自 PALETTE）—— 外观已全站统一。仍逐域生成而不是只发
+      一份到全局，是因为三域片段各自带 `<style>`、要能单独取出复用；代价几十字节。
+    ★ `--up/--down` 必须显式写死：不写就会继承到上一个域或 shell 的值。
     """
     t = THEMES[domain]
     sel = f"#{t.root_id}" if extra_scope else ":root"
-    lines = [
-        f"{sel}{{",
-        f"  --bg:{t.bg}; --card:{t.card}; --ink:{t.ink}; --line:{t.line};",
-        f"  --up:{t.up}; --down:{t.down};   /* ★ 本域原值，勿统一 */",
-    ]
-    for k, v in sorted(t.extra_vars.items()):
+    lines = [f"{sel}{{",
+             "  /* ★ 统一调色板 PALETTE（web/shell/scope.py）：三域同一份 */"]
+    for k, v in PALETTE.items():
         lines.append(f"  {k}:{v};")
     lines.append("}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# ★ 语义组件层（唯一真相源 #2）—— 组件外观与配色无关，光靠 PALETTE 统一不了
+# ---------------------------------------------------------------------------
+# 三域的导航/标签是**三套独立长出来的实现**，类名几乎不重叠（全站只共有
+# brand/card 两个 class），所以不能靠"同名类覆盖"，只能做**语义映射**：
+# 这里定义「导航条目」这个语义的规范写法，再逐域映射到各自的类名
+# （quant-lab `.nav-item` / etf `.lv1.lv2.lv3` / stock `.nav-item`）。
+#
+# 展开方式：每个选择器加 `#{root} ` 前缀后**放在域样式之后** → 同优先级靠
+# 文档顺序取胜、伪类/状态类还天然多一层特异性。所以这里写的值一定赢。
+def decl(props: dict[str, str]) -> str:
+    """把声明字典拼成 CSS 声明体（组件层的公共拼装器）。
+
+    build.py 的壳层（.qh-tab）也用它 —— 顶部导航标签和域内标签共用 CHIP 规范。
+    """
+    return "".join(f"{k}:{v};" for k, v in props.items())
+
+
+assert decl({"a": "1px"}) == "a:1px;"          # 用法自检
+
+# 可选中标签/药丸的规范：**白底黑字 → 选中黑底白字**（出处是 quant-lab 的
+# `.tab`，全站统一到它）。壳层顶部导航也吃这一份，见 build.py。
+CHIP: dict[str, str] = {
+    "background": "var(--card)",
+    "border": "1px solid var(--line)",
+    "border-radius": "16px",
+    "color": "var(--ink)",
+    "cursor": "pointer",
+    "font-family": "inherit",
+    "font-size": "13px",
+    "padding": "6px 16px",
+}
+CHIP_ON: dict[str, str] = {
+    "background": "var(--ink)",
+    "border-color": "var(--ink)",
+    "color": "#fff",
+    "font-weight": "600",
+}
+CHIP_HOVER: dict[str, str] = {"border-color": "var(--muted)", "color": "var(--ink)"}
+
+# 侧栏容器：统一成「居中 flex + 192px 的 sticky 浮动白卡片」。
+# stock 原本是占满整屏高的 fixed 侧栏，改这里要**连它的布局变量一起改** ——
+# 变量与结构是解耦的（.main 的 margin-left、.sidebar 的 width 都是 var），
+# 所以纯 CSS 就能换壳，不用动 DOM。
+NAV_W = "192px"
+NAV_CONTAINER: dict[str, str] = {
+    "--nav-w": NAV_W,
+    "--nav-pt": "16px",
+    "--nav-pb": "28px",
+    "--nav-gap": "22px",
+    "background": "var(--card)",
+    "border": "1px solid var(--line)",
+    "border-radius": "var(--radius)",
+    "flex": f"0 0 {NAV_W}",
+    "max-height": "calc(100vh - var(--nav-pt) - var(--nav-pb))",
+    "overflow-y": "auto",
+    "padding": "14px 10px",
+    "position": "sticky",
+    "top": "var(--nav-pt)",
+    "width": NAV_W,
+}
+NAV_LAYOUT: dict[str, str] = {
+    "--nav-w": NAV_W,
+    "--nav-pt": "16px",
+    "--nav-pb": "28px",
+    "--nav-gap": "22px",
+    "align-items": "flex-start",
+    "display": "flex",
+    "gap": "var(--nav-gap)",
+    "margin": "0 auto",
+    "max-width": "1380px",
+    "padding": "var(--nav-pt) var(--nav-pb) var(--nav-pb)",
+}
+# 导航条目：统一 padding/圆角/字号；**选中一律黑底白字**
+NAV_ITEM: dict[str, str] = {
+    "border-radius": "10px",
+    "color": "var(--muted)",
+    "cursor": "pointer",
+    "display": "block",
+    "font-size": "13.5px",
+    "font-weight": "400",
+    "padding": "8px 10px",
+}
+NAV_ITEM_ON: dict[str, str] = {
+    "background": "var(--ink)",
+    "color": "#fff",
+    "font-weight": "600",
+}
+NAV_ITEM_HOVER: dict[str, str] = {"background": "var(--card-2)", "color": "var(--ink)"}
+
+# 品牌区 / 分组标签 / 静态小药丸：只统一**形状**，语义色保留
+#   ⚠️ 药丸的底色承载语义（候选/观察、风险中/高、共同基因/增强点…），
+#      按用户口径"全部统一"把底色也抹平成白底黑字会**丢信息**，故不动底色。
+BRAND_BLOCK: dict[str, str] = {
+    "border-bottom": "1px solid var(--line)",
+    "font-size": "14px",
+    "font-weight": "600",
+    "letter-spacing": ".5px",
+    "line-height": "1.55",
+    "margin-bottom": "10px",
+    "padding": "2px 6px 10px",
+}
+GROUP_LABEL: dict[str, str] = {
+    "color": "var(--muted)",
+    "font-size": "11px",
+    "letter-spacing": ".08em",
+    "padding": "6px 10px",
+    "text-transform": "uppercase",
+}
+PILL: dict[str, str] = {
+    "border-radius": "999px",
+    "display": "inline-block",
+    "font-size": "11.5px",
+    "line-height": "1.6",
+    "padding": "2px 10px",
+    "vertical-align": "1px",
+}
+# 桌面隐藏、仅 ≤900px 显示的导航触发按钮（汉堡）
+NAV_TRIGGER: dict[str, str] = {"display": "none"}
+
+# (语义名, 声明, {域: (选择器元组,)}) —— 选择器不含作用域前缀，展开时补
+COMPONENTS: tuple[tuple[str, dict[str, str], dict[str, tuple[str, ...]]], ...] = (
+    ("壳层布局", NAV_LAYOUT, {
+        "quant-lab": (".shell",),
+        "etf": (".layout",),
+        "stock": (".main", ".content"),   # stock 的主列：外壳 + 内容容器
+    }),
+    ("侧栏容器", NAV_CONTAINER, {
+        "quant-lab": (".side",),
+        "etf": (".sidebar",),
+        "stock": (".sidebar",),
+    }),
+    ("侧栏品牌区", BRAND_BLOCK, {
+        "quant-lab": (".side .brand",),
+        "etf": (".side-head",),
+        "stock": (".sidebar-logo",),
+    }),
+    ("导航分组标签", GROUP_LABEL, {
+        "stock": (".nav-group .group-label",),
+    }),
+    ("导航条目", NAV_ITEM, {
+        "quant-lab": (".nav-item",),
+        "etf": (".lv1", ".lv2", ".lv3"),
+        "stock": (".nav-item",),
+    }),
+    ("导航条目 · 悬停", NAV_ITEM_HOVER, {
+        "quant-lab": (".nav-item:hover",),
+        "etf": (".lv1:hover", ".lv2:hover", ".lv3:hover"),
+        "stock": (".nav-item:hover",),
+    }),
+    ("导航条目 · 选中（黑底白字）",
+     {**NAV_ITEM_ON, "transition": "none"}, {
+         "quant-lab": (".nav-item.on",),
+         "etf": (".lv1.cur", ".lv2.cur", ".lv3.cur"),
+         "stock": (".nav-item.active",),
+     }),
+    # etf 的 `›`/`▾` 箭头在选中态要跟着变白（否则深底上一枚深色箭头）
+    ("导航条目 · 选中箭头", {"color": "inherit", "opacity": ".8"}, {
+        "etf": (".lv1.cur .arr", ".lv2.cur .arr", ".lv3.cur .arr"),
+    }),
+    # ★ 可选中标签：域内三处（quant-lab .tab/.mode-btn、stock 因子筛选）
+    ("标签药丸", CHIP, {
+        "quant-lab": (".tab", ".mode-btn", ".fold-btn"),
+        "stock": (".factor-filters .f",),
+    }),
+    ("标签药丸 · 悬停", CHIP_HOVER, {
+        "quant-lab": (".tab:hover", ".mode-btn:hover"),
+        "stock": (".factor-filters .f:hover",),
+    }),
+    ("标签药丸 · 选中（黑底白字）", CHIP_ON, {
+        "quant-lab": (".tab.on", ".mode-btn.on"),
+        "stock": (".factor-filters .f.active",),
+    }),
+    ("静态小药丸 · 形状", PILL, {
+        "quant-lab": (".tag",),
+        "etf": (".badge", ".risk"),
+        "stock": (".badge", ".quick-tags .t", ".gene-tags .g",
+                  ".refresh-btn", ".header h1 .tag"),
+    }),
+    ("移动端导航按钮（桌面隐藏）", NAV_TRIGGER, {
+        "etf": (".menu-btn",),
+        "stock": (".hamburger",),
+    }),
+)
+
+# ≤900px 的导航行为：三域统一——quant-lab 收成横向一排，etf/stock 收成抽屉。
+# ⚠️ 这段**必须**存在且排在最后：组件层的基础规则与域内媒体查询同优先级、
+#    又写在它们之后，不在这里重申就会把域内的移动端抽屉样式顶掉。
+_DRAWER: dict[str, str] = {
+    "position": "fixed",
+    "left": "0",
+    "top": "0",
+    "bottom": "0",
+    "height": "100%",
+    "width": "270px",
+    "border-radius": "0",
+    "border": "0",
+    "border-right": "1px solid var(--line)",
+    "max-height": "100%",
+    "overflow-y": "auto",
+    "z-index": "100",
+    "transform": "translateX(-100%)",
+    "transition": "transform .25s ease",
+}
+
+NAV_MEDIA: dict[str, dict[str, dict[str, str]]] = {
+    "quant-lab": {
+        ".shell": {"flex-direction": "column"},
+        ".side": {"width": "100%", "flex": "none", "position": "static",
+                  "max-height": "none", "display": "flex",
+                  "align-items": "center", "gap": "8px", "padding": "10px 12px"},
+        ".side .brand": {"border": "0", "margin": "0", "font-size": "14px",
+                         "padding": "0 8px 0 2px"},
+        ".nav-item": {"display": "inline-block"},
+    },
+    "etf": {
+        ".layout": {"flex-direction": "column", "gap": "16px"},
+        ".sidebar": dict(_DRAWER),
+        ".sidebar.open": {"transform": "translateX(0)"},
+        ".menu-btn": {"display": "flex"},
+    },
+    "stock": {
+        ".sidebar": dict(_DRAWER),
+        ".sidebar.show": {"transform": "translateX(0)"},
+        ".main": {"margin-left": "0"},
+        ".hamburger": {"display": "flex"},
+    },
+}
+
+
+def component_css(domain: str, *, extra_scope: bool = True) -> str:
+    """把语义组件层展开成该域的选择器 + 统一声明。
+
+    extra_scope=False 时不加 `#app-{d}` 前缀（写进 `@media` 里用不到，
+    但保留开关便于单测与复用）。
+    """
+    root = THEMES[domain].root_id
+    pfx = f"#{root} " if extra_scope else ""
+    lines: list[str] = []
+    for name, props, targets in COMPONENTS:
+        sels = targets.get(domain)
+        if not sels:
+            continue
+        lines.append(f"/* {name} */")
+        lines.append(",".join(pfx + s for s in sels) + "{" + decl(props) + "}")
+    return "\n".join(lines)
+
+
+def nav_media_css(domain: str) -> str:
+    """该域的 ≤900px 导航响应式块。
+
+    ★ 只发**本域**的规则：早期版本把三域的规则一起发，导致每个域的 `<style>`
+      里都带着另两域的媒体查询（同一份规则在产物里重复 3 遍）。
+    """
+    root = THEMES[domain].root_id
+    out = ["@media(max-width:900px){"]
+    for sel, props in NAV_MEDIA[domain].items():
+        out.append(f"  #{root} {sel}{{{decl(props)}}}")
+    out.append("}")
+    return "\n".join(out)
 
 
 # 三域模板的全局块（html/body/*/:root）需要改写为作用域根，
@@ -354,11 +722,20 @@ def scope_html_fragment(html: str, domain: str, *, wrap: bool = True) -> str:
     body = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.S)
 
     scoped_css = "\n".join(
-        scope_css(_promote_globals(c, domain), domain) for c in css_blocks
+        unify_colors(scope_css(_promote_globals(c, domain), domain), domain)
+        for c in css_blocks
     )
-    body = _namespace_ids(body, domain)
+    body = unify_colors(_namespace_ids(body, domain), domain)
 
-    out = [f'<style data-domain="{domain}">', theme_block(domain), scoped_css, "</style>"]
+    # ★ 顺序关键：theme_block 必须放在域样式**之后**。
+    #   模板自己的 `:root{}` 被 _promote_globals 改写成 `#app-{d}{}`，与本模块的
+    #   令牌块**同优先级**，胜负只由文档顺序决定 —— 放前面会被模板原值覆盖，
+    #   统一令牌静默失效（表现=颜色还是各域老样子，不报错）。
+    #   component_css / nav_media_css 同理，且**必须**在域样式之后：
+    #   它们是同优先级的覆盖层，还要顶掉域内已有的 @media 抽屉样式。
+    out = [f'<style data-domain="{domain}">', scoped_css,
+           component_css(domain), theme_block(domain), nav_media_css(domain),
+           "</style>"]
     if wrap:
         out.append(scope_html_body(body, domain))
     else:

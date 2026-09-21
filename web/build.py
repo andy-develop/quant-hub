@@ -4,7 +4,8 @@
   - 单文件，可离线打开（echarts 已本地化，不依赖 CDN）
   - 三域各自 CSS 作用域隔离，互不污染
   - 左侧一级导航切换三域（顶部锚点切换域内页面）
-  - 涨跌色逐域保留（个性化选股本来就是反的，见 scope.py 注释）
+  - ★ 视觉风格全站统一：配色令牌与涨跌色都来自 `web/shell/scope.py` 的 PALETTE
+    （含红涨绿跌），本文件不再自己写一份色值
 
 用法：
     python -m web.build --src <三仓根目录> --out web/dist/index.html
@@ -20,7 +21,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from web.shell.scope import THEMES, scope_html_fragment  # noqa: E402
+from web.shell.scope import (  # noqa: E402
+    CHIP, CHIP_HOVER, CHIP_ON, PALETTE, THEMES, decl, scope_html_fragment,
+)
 
 __all__ = ["build", "SHELL_CSS", "NAV", "DOMAINS", "inject_payloads"]
 
@@ -108,19 +111,18 @@ def inject_payloads(fragment: str, domain: str,
         return fragment
 
     if domain == "stock":
-        sc = envelopes.get(("stock", "screen"))
-        if sc is None:
-            return fragment        # /*__STOCK_UNIVERSE__*/[] 本身是合法空数组，不替换也不崩
+        # ★ 注意：下面几个占位符位于页面**可见文本**里，必须无条件替换。
+        #   曾经是 `if sc.get("data_date")` 条件替换 —— 信封里少一个字段，
+        #   `/*__DATA_DATE__*/` 就原样显示在"数据日期"旁边（线上确实如此）。
+        sc = envelopes.get(("stock", "screen")) or {}
         pl = sc.get("payload") or {}
         stocks = pl.get("stocks", [])
         factors = pl.get("factors", {})
         fragment = fragment.replace("/*__STOCK_UNIVERSE__*/[]", _js(stocks))
         fragment = fragment.replace("/*__REAL_FACTORS__*/{}", _js(factors))
         gen = (sc.get("generated_at") or "")[11:16]      # HH:MM
-        if gen:
-            fragment = fragment.replace("/*__GEN_TIME__*/", gen)
-        if sc.get("data_date"):
-            fragment = fragment.replace("/*__DATA_DATE__*/", sc["data_date"])
+        fragment = fragment.replace("/*__GEN_TIME__*/", gen or "—")
+        fragment = fragment.replace("/*__DATA_DATE__*/", sc.get("data_date") or "—")
         return fragment
 
     return fragment
@@ -152,40 +154,83 @@ def load_envelopes(payload_dir: str) -> dict[tuple[str, str], dict]:
 # ---------------------------------------------------------------------------
 # 壳层样式（自身也用作用域，避免污染三域）
 # ---------------------------------------------------------------------------
+# ★ 色值不写死在这里：用 $TOKEN 占位，构建时从 PALETTE 取值（见 _shell_css）。
+#   否则"统一"只到三域、外壳又成了第二套色。
 SHELL_CSS = """
-.qh-shell{background:#F1F2F4;min-height:100vh;margin:0;padding:0;
-  font:14px/1.6 -apple-system,"PingFang SC","Helvetica Neue",Arial,sans-serif;}
-.qh-topbar{position:sticky;top:0;z-index:9999;display:flex;align-items:center;gap:6px;
-  background:#1F2430;color:#fff;padding:0 20px;height:52px;
-  box-shadow:0 1px 4px rgba(0,0,0,.18);}
-.qh-topbar .qh-logo{font-size:15px;font-weight:700;letter-spacing:.5px;
-  padding-right:18px;margin-right:6px;border-right:1px solid rgba(255,255,255,.18);}
-.qh-topbar .qh-tab{padding:6px 16px;border-radius:8px;font-size:13.5px;color:#B9BEC9;
-  cursor:pointer;white-space:nowrap;border:0;background:transparent;font-family:inherit;}
-.qh-topbar .qh-tab:hover{color:#fff;background:rgba(255,255,255,.08);}
-.qh-topbar .qh-tab.on{background:#fff;color:#1F2430;font-weight:600;}
-.qh-topbar .qh-tab .qh-note{display:block;font-size:10px;opacity:.62;font-weight:400;
+.qh-shell{background:$BG;min-height:100vh;margin:0;padding:0;font:14px/1.6 $NUM;}
+.qh-topbar{position:sticky;top:0;z-index:9999;display:flex;align-items:center;gap:8px;
+  background:$BG;color:$INK;min-height:60px;padding:10px 20px;
+  border-bottom:1px solid $LINE;}
+.qh-topbar .qh-logo{font-size:15px;font-weight:700;letter-spacing:.5px;color:$INK;
+  padding-right:18px;margin-right:6px;border-right:1px solid $LINE;}
+.qh-topbar .qh-tab{$CHIP}
+.qh-topbar .qh-tab:hover{$CHIP_HOVER}
+.qh-topbar .qh-tab.on{$CHIP_ON}
+.qh-topbar .qh-tab .qh-note{display:block;font-size:10px;color:$MUTED;font-weight:400;
   margin-top:-1px;line-height:1.2;}
+.qh-topbar .qh-tab.on .qh-note{color:#fff;opacity:.75;}
 .qh-banner{margin:0;padding:10px 20px;font-size:12.5px;display:flex;gap:16px;
-  align-items:center;background:#FFF8E6;border-bottom:1px solid #F0DDA8;color:#6B4E0B;}
+  align-items:center;background:#FFF8E6;border-bottom:1px solid #F0DDA8;color:$ACCENT;}
 .qh-banner .qh-lamp{width:9px;height:9px;border-radius:50%;display:inline-block;}
-.qh-banner .lamp-green{background:#16A34A}.qh-banner .lamp-yellow{background:#D97706}
-.qh-banner .lamp-red{background:#DC2626}
+.qh-banner .lamp-green{background:$GREEN}.qh-banner .lamp-yellow{background:$ACCENT}
+.qh-banner .lamp-red{background:$RED}
 .qh-banner b{font-weight:600;}
 .qh-banner .qh-meta{margin-left:auto;color:#8A7A4E;font-size:11.5px;}
 .qh-domain{display:none;}
 .qh-domain.on{display:block;}
-.qh-footer{padding:22px 20px 36px;color:#8A8F99;font-size:11.5px;line-height:1.9;
-  border-top:1px solid #E2E4E9;margin-top:14px;background:#fff;}
-.qh-footer code{background:#F4F5F7;padding:1px 5px;border-radius:4px;font-size:11px;}
+.qh-footer{padding:22px 20px 36px;color:$MUTED;font-size:11.5px;line-height:1.9;
+  border-top:1px solid $LINE;margin-top:14px;background:$CARD;}
+.qh-footer code{background:$BG;padding:1px 5px;border-radius:4px;font-size:11px;}
 @media(max-width:760px){
-  .qh-topbar{height:auto;flex-wrap:wrap;padding:8px 12px;gap:4px}
+  .qh-topbar{min-height:auto;flex-wrap:wrap;padding:8px 12px;gap:4px}
   .qh-topbar .qh-logo{border:0;margin:0;padding-right:8px;font-size:14px}
   .qh-topbar .qh-tab .qh-note{display:none}
   .qh-banner{flex-wrap:wrap;gap:8px}
   .qh-banner .qh-meta{margin-left:0}
 }
 """
+
+# 外壳里可用到的令牌。$GREEN/$RED 是 PALETTE 涨跌色的别名 —— 调色板里绿红只有
+# 涨跌这两档（红涨绿跌），直接引用 --down/--up 读起来会歧义反了，故在此改名。
+#
+# ★ 顶部导航标签吃的是域内那套「可选中标签」规范（scope.py 的 CHIP）——
+#   壳层在 `#app-*` 之外，拿不到 var(--card)/var(--ink)，所以这里把令牌值
+#   落成实参。**只有色值需要落，形状仍在 CHIP 里**，两边不会各自漂。
+def _shell_chip() -> dict[str, dict[str, str]]:
+    return {
+        "$CHIP": {**CHIP, "background": PALETTE["--card"],
+                  "color": PALETTE["--ink"],
+                  "border": f"1px solid {PALETTE['--line']}"},
+        "$CHIP_HOVER": {**CHIP_HOVER, "color": PALETTE["--ink"],
+                        "border-color": PALETTE["--muted"]},
+        "$CHIP_ON": {**CHIP_ON, "background": PALETTE["--ink"],
+                     "border-color": PALETTE["--ink"], "color": "#fff"},
+    }
+
+
+_SHELL_TOKENS = {
+    "$BG": PALETTE["--bg"],
+    "$CARD": PALETTE["--card"],
+    "$CARD2": PALETTE["--card-2"],
+    "$INK": PALETTE["--ink"],
+    "$LINE": PALETTE["--line"],
+    "$MUTED": PALETTE["--muted"],
+    "$ACCENT": PALETTE["--accent"],
+    "$NUM": PALETTE["--num"],
+    "$GREEN": PALETTE["--down"],
+    "$RED": PALETTE["--up"],
+}
+
+
+def _shell_css(css: str = SHELL_CSS) -> str:
+    """把 SHELL_CSS 里的 $TOKEN 换成 PALETTE 的值（唯一真相源在 scope.py）。"""
+    subs = dict(_SHELL_TOKENS)
+    for k, props in _shell_chip().items():
+        subs[k] = decl(props)
+    # ★ 长键先换：`$CARD` 是 `$CARD2` 的前缀，先换短的会把 `$CARD2` 换残
+    for k in sorted(subs, key=len, reverse=True):
+        css = css.replace(k, subs[k])
+    return css
 
 SHELL_JS = """
 (function(){
@@ -342,7 +387,7 @@ def _assemble(*, body: list[str], head_assets: str, health: dict,
 <title>Quant Hub · 量化中枢</title>
 {head_assets}
 <style>
-{SHELL_CSS}
+{_shell_css()}
 </style>
 </head>
 <body class="qh-shell">
@@ -359,7 +404,7 @@ def _assemble(*, body: list[str], head_assets: str, health: dict,
 <footer class="qh-footer">
   <div><b>Quant Hub</b> —— 短线策略 / ETF 策略 / 个性化选股 三域合并单页。</div>
   <div>数据与代码分离：代码公开于 <code>quant-hub</code>，行情数据私有于 <code>quant-hub-data</code>。</div>
-  <div>本页为静态快照，不构成投资建议。涨跌颜色沿用各域原有约定（个性化选股为绿涨红跌）。</div>
+  <div>本页为静态快照，不构成投资建议。全站视觉统一（配色令牌见 <code>web/shell/scope.py</code>），涨跌色为中国惯例：<b>红涨绿跌</b>。</div>
 </footer>
 <script>
 {SHELL_JS.replace("__DOMAINS__", repr(DOMAINS)).replace("__DEFAULT__", default_domain)}
