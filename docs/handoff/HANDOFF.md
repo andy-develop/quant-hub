@@ -272,6 +272,8 @@ python -m tools.data_pipeline.verify --data-root data
    那两条带两档特异性，会自然压住组件层（不必动它们）。
 7. **`.`quick-tags .t` 给 32px 最小高度**：它原本 23px —— 补上键盘可达后它从「装饰」变成真「触点」；
    `.gene-tags .g` 是纯展示（共同基因/增强点），不跟，保持小药丸的紧凑。
+   **必须显式 `box-sizing:border-box`**：stock 模板是 content-box（没有 `*{box-sizing}`），
+   不声明时 `min-height:32px` 量的是内容盒，实测出来是 **38px**。
 
 ### 验证记录
 

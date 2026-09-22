@@ -882,8 +882,11 @@ COMPONENTS: tuple[tuple[str, dict[str, str], dict[str, tuple[str, ...]]], ...] =
     # ★ 触控底线：`.quick-tags .t` 是**可点的**（〈快速加自选），只有 23px 高。
     #   键盘可达补齐后，它从「装饰」变成真正的「触点」——以后归 32px 那一档管。
     #   `.gene-tags .g` 是纯展示（共同基因 / 增强点），不跟：小药丸的紧凑是它的作用。
+    #   注：stock 模板是 content-box（没有 `*{box-sizing:border-box}`），min-height 量的是
+    #   内容盒 —— 不显式声明 border-box，32px 会变成 38px（实测）。
     ("可点小药丸 · 触控底线",
-     {"align-items": "center", "display": "inline-flex", "min-height": "32px"}, {
+     {"align-items": "center", "box-sizing": "border-box", "display": "inline-flex",
+      "min-height": "32px", "padding": "0 10px"}, {
          "stock": (".quick-tags .t",),
      }),
     ("移动端导航按钮（桌面隐藏）", NAV_TRIGGER, {
