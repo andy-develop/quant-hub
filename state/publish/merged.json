@@ -1,7 +1,6 @@
 {
-  "action": "update",
-  "ok": true,
-  "resource_id": "1789175513578218887",
+  "action": "noop",
+  "reason": "unchanged",
   "fingerprint": "2026-09-09#b9a0874299a92d0f",
   "domain": "merged"
 }
