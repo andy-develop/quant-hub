@@ -230,6 +230,70 @@ python -m tools.data_pipeline.verify --data-root data
 
 ---
 
+## 键盘可达性底线 + UA 默认字号收口（2026-09-22 再补）
+
+### 动机
+
+上一节把「导航 = 标签」统一完后，顺手做了次可达性审计（`el.focus()` 后看
+`document.activeElement` 是否真的落到它身上，而不是看 `tabIndex` —— 浏览器这两件事不一致）。
+实测发现：**quant-lab 整域只有 7 个 Tab 落点**（3 个顶部 tag + 2 个按钮 + 2 张卡）。
+
+| 域 | 点得动但键盘聚焦不到的 | 原因 |
+|---|---|---|
+| quant-lab | 域内导航（动量策略/量化黑盒）+ 6 个区间 chip | `.nav-item` 是**没有 `href` 的 `<a>`**（Chrome 里 `tabIndex` 返回 0 但 `focus()` 不生效）；`.tab` 是 `<div>` |
+| etf | 8 条目录树（`.lv1/.lv2/.lv3`） | 都是 `<div data-key>` |
+| stock | 4 条导航 + 因子筛选 + 快速加自选 + 自选删除 | 都是 `<div>`/`<span>` |
+
+另：etf 的 `<small>` 卡片注释吃 **UA 默认 10.8333px** —— 全站唯一一个不在 6 档字号阶上的值。
+
+### 改动文件
+
+| 文件 | 说明 |
+|---|---|
+| `web/shell/scope.py` | 新增 `KEYBOARD_REACH`（三域的「点击目标」选择器）；新增「单位小字（<small>）→fs-xs」与「可点小药丸 · 触控底线（min-height 32px）」两条组件规则 |
+| `web/build.py` | `SHELL_JS` 新增键盘 shim（`__REACH__` 占位 → `json.dumps`）；新增 `_assemble` 里的 REPLACE |
+| `tests/web/test_keyboard_reach.py` | 新增 8 条：清单覆三域、选择器不带作用域前缀、**token 在模板里仍能找到**（防静默落空）、shim 四件套俱在、`__REACH__` 已替换、按 `#app-*` 隔离 |
+| `tests/web/test_scope.py` | 新增 `test_ua_default_small_is_pulled_onto_the_scale` |
+| `docs/handoff/HANDOFF.md` | 本节 |
+
+### 关键决策（勿破坏）
+
+1. **修在壳层，不动三份模板**：三域模板各长一套，改模板要改三处且不可回归；
+   壳层按 `#app-<domain>` 作用域扫 `KEYBOARD_REACH` 里的选择器，补 `tabindex="0"` + `role="button"`，
+   并把 `Enter`/`Space` 映射成 `click()`（**复用模板原有处理器**，不重写行为）。
+2. **`Space` 必须 `preventDefault()`**：否则按一下空格页面就滚一屏。
+3. **MutationObserver（防抖 60ms）不能省**：stock 的因子筛选/自选列表/**快速加自选**都是 `innerHTML` 重绘的，
+   只在 `DOMContentLoaded` 扫一遍会漏。observer 只监听 `childList`（不监听属性）→ 自己改属性不会死循环。
+4. **跳过原生可聚焦的**：有 `href` 的 `<a>`、`button`/`input`/`select`/`textarea`/`summary`/`details`；
+   尤其 `<a>` 要判 `href` 而不是 `tabIndex`（无 `href` 的 `<a>` 在 Chrome 里 `tabIndex` 就是 0）。
+5. **`.` 清单会静默落空**：模板改类名/`data-*` 属性后清单不报错，只是又不可聚焦了 ——
+   故有一条用例去模板源码里逐个 token 找证据。
+6. **`<small>` 只收默认值**：模板里 `.pos-cell .val small` / `.bt-cell .val small` 写死 12px，
+   那两条带两档特异性，会自然压住组件层（不必动它们）。
+7. **`.`quick-tags .t` 给 32px 最小高度**：它原本 23px —— 补上键盘可达后它从「装饰」变成真「触点」；
+   `.gene-tags .g` 是纯展示（共同基因/增强点），不跟，保持小药丸的紧凑。
+
+### 验证记录
+
+- 本地：`pytest tests --ignore=tests/incident` **245 passed / 7 skipped**（`tests/web` 80 → 90）
+- Tab 序列（改前 → 改后）：quant-lab 7 个落点 → 现在能 Tab 到「动量策略/量化黑盒」与 6 个区间 chip；
+  etf 8/8、stock 4/4 全部可聚焦
+- 行为验证（Playwright）：焦点落在 `.nav-item` 上按 Enter → `#page-blackbox` 可见、导航选中切过去；
+  落在区间 chip 上按 Space → 切到「近一周」且 `window.scrollY` 仍为 0（没滚页）；
+  etf `资产配置策略` → hash `#/sel-asset`；stock `因子库` → hash `#/factors`
+- `scorecard.py`：字号阶 etf 8→7 档（10.8333px 消失）、“点<32px” 由 stock 6/23 → **0/23**；
+  对比度 0 不达标、无页面横溢（与改前一致）
+- `check_all.py`：三域 + 黑盒页 1440/390 均 **0 pageerror**
+
+### 遗留事项
+
+- 键盘 shim 只补了 `tabindex` + `role`，**没补 `aria-pressed`/`aria-current`**：
+  选中态只对眼睛可见，屏幕阅读器读不出「当前在哪一页」。待专项。
+- 自选/搜索结果等弹窗内的节点靠 observer 事后补标记，**弹出瞬间到 60ms 之间**键盘不可达（实测无感，但理论上存在）。
+
+
+---
+
 ## 个股数据链故障与恢复（2026-09-22）
 
 **故障现象**：2026-09-14 起 `data-stock-incr` 定时任务连续失败，个股数据仓停在 09-11

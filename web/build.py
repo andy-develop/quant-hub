@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from web.shell.scope import (  # noqa: E402
-    CHIP, CHIP_HOVER, CHIP_ON, PALETTE, THEMES, decl, fragment_ids,
+    CHIP, CHIP_HOVER, CHIP_ON, KEYBOARD_REACH, PALETTE, THEMES, decl, fragment_ids,
     scope_html_fragment,
 )
 
@@ -319,7 +319,48 @@ SHELL_JS = """
     Array.prototype.forEach.call(document.querySelectorAll(".qh-tab"), function(b){
       b.addEventListener("click", function(){ show(b.getAttribute("data-domain")); });
     });
+    bootKeyboard();
   });
+
+  /* ★ 键盘可达性底线（见 scope.py 的 KEYBOARD_REACH）
+     三域模板里有大量「用 JS 绑了点击的 div / 没有 href 的 a」—— 浏览器原生聚焦不到，
+     键盘用户 Tab 不到它们。改模板要动三份、风险大，所以在这里统一补齐：
+       tabindex=0 + role=button，Enter/Space → click()（复用模板原有处理器）。
+     MutationObserver 兜住动态渲染出来的节点（因子筛选、自选列表都是 innerHTML 重绘的）。 */
+  var REACH = __REACH__;
+  var NATIVE = /^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY|DETAILS)$/;
+  function markReachable(){
+    Object.keys(REACH).forEach(function(dom){
+      var root = document.getElementById("app-" + dom);
+      if (!root) return;
+      REACH[dom].forEach(function(sel){
+        Array.prototype.forEach.call(root.querySelectorAll(sel), function(el){
+          if (el.hasAttribute("data-qh-key")) return;
+          // 原生就能聚焦的不动（有 href 的 a、button、input…）
+          if (el.tagName === "A" ? el.hasAttribute("href") : NATIVE.test(el.tagName)) return;
+          el.setAttribute("data-qh-key", "1");
+          el.setAttribute("tabindex", "0");
+          if (!el.hasAttribute("role")) el.setAttribute("role", "button");
+        });
+      });
+    });
+  }
+  document.addEventListener("keydown", function(e){
+    if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
+    var el = e.target;
+    if (!el || !el.hasAttribute || !el.hasAttribute("data-qh-key")) return;
+    e.preventDefault();   // Space 默认会滚页
+    el.click();
+  });
+  function bootKeyboard(){
+    markReachable();
+    if (!window.MutationObserver) return;
+    var pending = null;
+    new MutationObserver(function(){
+      if (pending) return;
+      pending = setTimeout(function(){ pending = null; markReachable(); }, 60);
+    }).observe(document.body, {childList: true, subtree: true});
+  }
 })();
 """
 
@@ -650,7 +691,9 @@ def _assemble(*, body: list[str], head_assets: str, health: dict,
   <div>本页为静态快照，不构成投资建议。全站视觉统一（配色令牌见 <code>web/shell/scope.py</code>），涨跌色为中国惯例：<b>红涨绿跌</b>。</div>
 </footer>
 <script>
-{SHELL_JS.replace("__DOMAINS__", repr(DOMAINS)).replace("__DEFAULT__", default_domain)}
+{SHELL_JS.replace("__DOMAINS__", repr(DOMAINS)).replace("__DEFAULT__", default_domain)
+         .replace("__REACH__", json.dumps({k: list(v) for k, v in KEYBOARD_REACH.items()},
+                                          ensure_ascii=False))}
 </script>
 </body>
 </html>

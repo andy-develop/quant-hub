@@ -474,6 +474,17 @@ def test_shortterm_nav_items_are_tags_not_plain_links():
         (n, t) for n, _p, t in COMPONENTS)["导航条目"]
 
 
+@pytest.mark.parametrize("domain", _DOMAINS)
+def test_ua_default_small_is_pulled_onto_the_scale(domain):
+    """★ `<small>` 没人写字号时吃 UA 默认 10.8333px —— 不在 6 档字号阶里。
+
+    实测（etf 的检查项注释，10 处）就卡在这个值上；组件层把它收到 fs-xs。
+    `@media` 里的媒体查询不参与本用例（只看组件层）。
+    """
+    body = _rule_for(domain, "单位小字")
+    assert "font-size:var(--fs-xs)" in body, f"{domain} 的 small 不在字号阶上: {body}"
+
+
 def test_chip_is_white_then_black_on_white():
     """★ 可选中标签规范：白底黑字 → 选中黑底白字。"""
     assert CHIP["background"] == "var(--card)"

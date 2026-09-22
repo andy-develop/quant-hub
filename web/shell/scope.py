@@ -69,6 +69,7 @@ __all__ = [
     "UNIFY_MAP",
     "COMPONENTS",
     "NAV_MEDIA",
+    "KEYBOARD_REACH",
     "CHIP",
     "CHIP_ON",
     "decl",
@@ -780,6 +781,21 @@ PILL: dict[str, str] = {
 # 桌面隐藏、仅 ≤900px 显示的导航触发按钮（汉堡）
 NAV_TRIGGER: dict[str, str] = {"display": "none"}
 
+# 
+# ★ 键盘可达性：下面这些是**点击目标**，但浏览器原生聚焦不到 ——
+#   quant-lab 的 `.nav-item` 是**没有 href 的 `<a>`**（Chrome 里 `tabIndex` 返回 0
+#   但 `focus()` 不生效，实测 `document.activeElement` 不跟着走），
+#   etf/stock 的导航条目、区间 chip、因子筛选干脆是 `<div>`/`<span>`。
+#   实测改前 quant-lab 整域只有 **7 个 Tab 落点**（3 个顶部 tag + 2 个按钮 + 2 张卡），
+#   域内导航和 12 个区间 chip 全在 Tab 序列之外 —— 键盘用户根本切不了页。
+#   → 壳层（build.py 的 SHELL_JS）据此补 `tabindex="0"` + `role="button"`，
+#     并把 Enter/Space 映射成 `click()`（复用模板原有处理器，不改模板）。
+KEYBOARD_REACH: dict[str, tuple[str, ...]] = {
+    "quant-lab": (".side .nav-item", ".tab"),
+    "etf": (".lv1", ".lv2", ".lv3"),
+    "stock": (".nav-item", "[data-add]", "[data-f]", "[data-rec]", ".search-item"),
+}
+
 # (语义名, 声明, {域: (选择器元组,)}) —— 选择器不含作用域前缀，展开时补
 COMPONENTS: tuple[tuple[str, dict[str, str], dict[str, tuple[str, ...]]], ...] = (
     ("壳层布局", NAV_LAYOUT, {
@@ -799,6 +815,14 @@ COMPONENTS: tuple[tuple[str, dict[str, str], dict[str, tuple[str, ...]]], ...] =
     }),
     ("导航分组标签", GROUP_LABEL, {
         "stock": (".nav-group .group-label",),
+    }),
+    # `<small>` 是 UA 默认字号 10.83px（不在 6 档字号阶里）—— etf 的检查项注释就是它。
+    # 模板里 `.pos-cell .val small` / `.bt-cell .val small` 写死 12px，
+    # 那两条带两档特异性会自然压住本条，不必动。
+    ("单位小字（<small>）", {"font-size": "var(--fs-xs)"}, {
+        "quant-lab": ("small",),
+        "etf": ("small",),
+        "stock": ("small",),
     }),
     ("导航条目", NAV_ITEM, {
         "etf": (".lv1", ".lv2", ".lv3"),
@@ -855,6 +879,13 @@ COMPONENTS: tuple[tuple[str, dict[str, str], dict[str, tuple[str, ...]]], ...] =
         "stock": (".badge", ".quick-tags .t", ".gene-tags .g",
                   ".refresh-btn", ".header h1 .tag"),
     }),
+    # ★ 触控底线：`.quick-tags .t` 是**可点的**（〈快速加自选），只有 23px 高。
+    #   键盘可达补齐后，它从「装饰」变成真正的「触点」——以后归 32px 那一档管。
+    #   `.gene-tags .g` 是纯展示（共同基因 / 增强点），不跟：小药丸的紧凑是它的作用。
+    ("可点小药丸 · 触控底线",
+     {"align-items": "center", "display": "inline-flex", "min-height": "32px"}, {
+         "stock": (".quick-tags .t",),
+     }),
     ("移动端导航按钮（桌面隐藏）", NAV_TRIGGER, {
         "etf": (".menu-btn",),
         "stock": (".hamburger",),
