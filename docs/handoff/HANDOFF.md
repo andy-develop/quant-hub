@@ -103,6 +103,88 @@ python -m tools.data_pipeline.verify --data-root data
 
 ---
 
+## 本地部署：定时拉取 + 数据服务（2026-09-22）
+
+在不动 GitHub Actions 的前提下，新增本地一键脚本（`tools/local/`，**零新增依赖**：
+仅 Python 标准库 + 本仓 common/tools；pandas/numpy/pyarrow/requests 复用现有环境）。
+
+### 架构决策（用户确认「服务内缓存」方案）
+
+- **parquet 文件 = 唯一真相**：落盘复用现有 pipeline/契约分区/幂等/封存逻辑，不引入第二套存储
+- **内存 = 数据服务内的查询缓存**（非独立存储引擎）：serve.py 启动时把常用表预加载为
+  DataFrame 缓存；定时拉取后 `POST /refresh` 热刷新；崩溃丢失可重建，无持久化责任
+
+### fetch.py —— 本地定时拉取编排（与 GitHub Actions data-*.yml 对齐）
+
+```bash
+# 立即跑一次全链路（index→stock→etf→events(lhb→zt)→verify）
+python -m tools.local.fetch --once --data-root <data>
+# 只跑某一步（冒烟/补跑）
+python -m tools.local.fetch --once --only events --data-root <data>
+# 常驻后台：按北京盘后时刻错峰触发，非交易日自动闸门跳过
+python -m tools.local.fetch --daemon --data-root <data>
+# 打印推荐 crontab 行（与 --daemon 二选一）
+python -m tools.local.fetch --cron --data-root <data>
+# 自测：合成数据不联网（events 组不支持 --offline，会提示跳过）
+python -m tools.local.fetch --once --offline --data-root <data>
+```
+
+- 时间表（北京时间）：16:30 index / 16:40 stock / 16:55 etf / 17:10 events（lhb 先、zt 后）/
+  17:35 verify；交易日闸门用 `calendar.is_trading_day()`，非交易日静默跳过
+- 幂等：各 pipeline 自带（同日重跑跳过/合并），重复触发安全；verify 参数特例（无
+  `--writer/--offline/--asof`）已在 `_run_module` 内处理
+- 空数据根首次 `--offline` 合成需 `--allow-stale`（仅 index/etf 有该参数，代码已加）
+
+### serve.py —— 一键数据服务（stdlib HTTP，内存缓存 + 热刷新）
+
+```bash
+python -m tools.local.serve --data-root <data> --port 8787
+```
+
+- 启动即预加载：events 5 表（`--events-days` 默认 60，仅 zt_daily 取近 N 日，其余全量）、
+  K 线缓存（`--kline-assets "stock:hfq,etf:hfq"`，逗号分隔多组，支持 index:raw）
+- 端点：
+  - `GET /health` —— 缓存行数/标的数/启动时间
+  - `GET /api/events?table=&date=&start=&end=&code=&columns=` —— 事件表任意历史日查询
+  - `GET /api/kline?asset=&fq=&code=&last_n=` —— K 线读取（index 用 fq=raw，目录在
+    `market/index/<group>/<code>/{daily,weekly,monthly}`）
+  - `GET /api/meta?name=` —— 元数据（universe/st_history 等）
+  - `POST /refresh` —— 定时拉取后热刷新内存缓存
+- 输出：`data` 记录数组；datetime→ISO 字符串、NaN→null；默认 `max_rows=20000`
+  （**必须 ≥5203**：zt_daily 单日为全市场快照）；超限截断并标注 `truncated`
+
+### 验证记录（本地全链路）
+
+- **offline 全链路**：空数据根 `rm -rf` 后 `fetch.py --once --offline` 全通（index 106 /
+  stock 4740 / etf 12824 行，verify 全过，events 正确跳过）
+- **真实数据仓 serve 全端点**：/health（lhb_detail 61538 / lhb_seat 564118 / zt_pool 591 /
+  zt_ladder 3352 / zt_daily 295738 行，kline 缓存 5214 标的）；events 五表按日期查询
+  （2026-03-10 龙虎榜 75 行、2026-09-21 zt_ladder {1:81,2:14,3:5,4:2,5:1}、zt_daily 5203 行
+  无截断）；kline stock/index 正常；meta universe 5552 行；`POST /refresh` 9.55s 热刷新成功；
+  非法路径/参数容错正常
+- **fetch→serve 联动**：沙箱 stock 600001 经 fetch 写入 → serve 正确读出
+- **events 增量幂等冒烟**（真实仓，`--asof 2026-09-18` 已封存日）：lhb_incr/zt_pipeline 均
+  命中 `[skip] 已入库`，零网络零写入，fetch.py 的 events 子进程路径端到端打通
+
+### 关键经验（本次踩坑）
+
+1. **Py3.9 `fromisoformat` 不支持无分隔符日期**：etf 的 `CSI_START="20130719"` 直接解析崩 →
+   `etf_incr.py` 新增 `_parse_csi_start()` 容错解析（commit 见本仓）
+2. **daemon 日志重定向 0 字节**：print 全缓冲，重定向到文件须 `flush=True`
+3. **index 加载目录结构**：底层目录是 `raw`（指数不分复权），`load(asset="index", fq="raw")`；
+   扫描 code 要 `*/*` 与 `*` 两层取 basename，否则 `broad/sh000001` 被误当 code
+4. **zt_daily 单日为全市场快照**（每只股票一行，~5203 行，`limit_count=0` 表示未涨停），
+   查询默认 `max_rows` 必须覆盖，否则被截断成 5000 行
+
+### 遗留事项
+
+- 真实仓 `data/events/*/_incr/` 为空属正常（回补时已清理，历史全在封存分区）；下一交易日
+  真实定时拉取将首次落 `_incr` 日分片
+- `--daemon` 与 `--cron` 二选一：系统已有 cron 管理时用 `--cron` 打印行，否则用 `--daemon`
+- 新代码一律走 `tools/local/`，勿重复实现 pipeline 逻辑（fetch.py 只做 subprocess 编排）
+
+---
+
 ## 三域「行情纸」二次统一 + 短线域双页装配修复（2026-09-22）
 
 ### 动机

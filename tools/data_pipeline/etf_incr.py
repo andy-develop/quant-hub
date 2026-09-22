@@ -37,6 +37,15 @@ from tools.data_pipeline.csindex import (  # noqa: E402
     derive_period, fetch_csi_rows, freshness_gate, ingest_daily_increment,
 )
 
+
+def _parse_csi_start() -> _dt.date:
+    """CSI_START 无分隔符（'20130719'），Python 3.9 的 fromisoformat 不支持，容错解析。"""
+    s = str(CSI_START)
+    try:
+        return _dt.date.fromisoformat(s)
+    except ValueError:
+        return _dt.datetime.strptime(s, "%Y%m%d").date()
+
 ASSET = "etf"
 
 
@@ -131,7 +140,7 @@ def run(codes=CSINDEX_CODES, *, root="data", asof=None, writer="data-etf-incr",
     rows_by_code: dict = {}
     for code in codes:
         start = last_by_code.get(code)
-        start = (start + _dt.timedelta(days=1)) if start else _dt.date.fromisoformat(CSI_START)
+        start = (start + _dt.timedelta(days=1)) if start else _parse_csi_start()
         if start > end:
             logger(f"[skip] {code} 已到 target_day（库内 {last_by_code[code]}），无增量")
             continue
