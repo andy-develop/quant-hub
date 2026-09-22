@@ -68,6 +68,7 @@ __all__ = [
     "PALETTE",
     "UNIFY_MAP",
     "COMPONENTS",
+    "ARIA_SELECTED",
     "NAV_MEDIA",
     "KEYBOARD_REACH",
     "CHIP",
@@ -794,6 +795,44 @@ KEYBOARD_REACH: dict[str, tuple[str, ...]] = {
     "quant-lab": (".side .nav-item", ".tab"),
     "etf": (".lv1", ".lv2", ".lv3"),
     "stock": (".nav-item", "[data-add]", "[data-f]", "[data-rec]", ".search-item"),
+}
+
+# ★ 选中态的语义：三域都用「加一个类名」表示「我被选中 / 当前就在这里」，
+#   但类名只对眼睛可见 —— 屏幕阅读器读不出「你现在在哪一页」。
+#   实测（改前）：Tab 到导航条目按回车真的切了页，但 AT 里毫无提示。
+#
+#   每条 = (要标记的元素, 选中类名, aria 属性, 值, 承载类名的元素或 None)：
+#     · 第 5 项为 None   → 看元素**自己**有没有那个类名（多数情况）
+#     · 第 5 项为 (选,类) → 看**另一个**元素有没有那个类名。
+#          抽屉（`#menu-btn`/`#hamburger`）的开关状态长在 `#sidebar` 上，
+#          但要读的是按钮 —— 屏幕阅读器要知道这个按钮展开的是什么、现在展没展开。
+#     · `#sidebar` 这类会重名的 id 在构建时被 `_namespace_ids` 改成 `#<域>__sidebar`，
+#          所以载体一律用**类名**（`.sidebar`）—— 类名不重命名，且天然按域隔离。
+#          踩过的坑：写 `"#sidebar"` 时 `root.querySelector` 返回 null，规则**静默全空**
+#          （按钮永远 `aria-expanded="false"`，看不出报错）。
+#
+#   为什么选 `aria-current="page"` 而不是 `role="tablist"`：
+#     `role="tab"` 有一整套硬性要求（方向键在组内移动、`aria-controls` 指向面板、
+#     面板 `role="tabpanel"` + `tabindex`），半套反而比不做更糟。顶部三个 tag
+#     先用「按钮 + `aria-current`」，真要上 tablist 得连方向键一起做（待专项）。
+ARIA_SELECTED: dict[str, tuple[tuple[str, str | None, str, str,
+                                    tuple[str, str] | None], ...]] = {
+    "quant-lab": (
+        (".side .nav-item", "on", "aria-current", "page", None),
+        (".tab", "on", "aria-pressed", "true", None),
+        (".mode-btn", "on", "aria-pressed", "true", None),
+    ),
+    "etf": (
+        ("[data-key]", "cur", "aria-current", "page", None),
+        (".lv1", "open", "aria-expanded", "true", None),
+        (".menu-btn", None, "aria-expanded", "true", (".sidebar", "open")),
+    ),
+    "stock": (
+        (".nav-item", "active", "aria-current", "page", None),
+        ("[data-f]", "active", "aria-pressed", "true", None),
+        ("[data-rec]", "sel", "aria-pressed", "true", None),
+        (".hamburger", None, "aria-expanded", "true", (".sidebar", "show")),
+    ),
 }
 
 # (语义名, 声明, {域: (选择器元组,)}) —— 选择器不含作用域前缀，展开时补

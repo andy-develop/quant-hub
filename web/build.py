@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from web.shell.scope import (  # noqa: E402
-    CHIP, CHIP_HOVER, CHIP_ON, KEYBOARD_REACH, PALETTE, THEMES, decl, fragment_ids,
+    CHIP, ARIA_SELECTED, CHIP_HOVER, CHIP_ON, KEYBOARD_REACH, PALETTE, THEMES, decl, fragment_ids,
     scope_html_fragment,
 )
 
@@ -304,7 +304,11 @@ SHELL_JS = """
       var el = document.getElementById("qh-domain-" + d);
       if (el) el.classList.toggle("on", d === dom);
       var tb = document.getElementById("qh-tab-" + d);
-      if (tb) tb.classList.toggle("on", d === dom);
+      if (tb) {
+        tb.classList.toggle("on", d === dom);
+        // 选中态只对眼睛可见是不行的（屏幕阅读器读不出「现在在哪一页」）
+        tb.setAttribute("aria-current", d === dom ? "page" : "false");
+      }
     });
     try { if (push !== false) history.replaceState(null, "", "#" + dom); } catch(e){}
     // 切换后让各域的 echarts resize（隐藏时初始化会算出 0 宽）
@@ -354,12 +358,42 @@ SHELL_JS = """
   });
   function bootKeyboard(){
     markReachable();
+    markSelected();
     if (!window.MutationObserver) return;
     var pending = null;
+    var sync = function(){ pending = null; markReachable(); markSelected(); };
     new MutationObserver(function(){
       if (pending) return;
-      pending = setTimeout(function(){ pending = null; markReachable(); }, 60);
-    }).observe(document.body, {childList: true, subtree: true});
+      pending = setTimeout(sync, 60);
+    }).observe(document.body, {childList: true, subtree: true,
+                               attributes: true, attributeFilter: ["class"]});
+  }
+
+  /* ★ 选中态的语义（见 scope.py 的 ARIA_SELECTED）
+     切页/切区间真的发生了，但 AT 里毫无提示 —— 类名只对眼睛可见。
+     这里把「谁选了」翻译成 aria-current / aria-pressed / aria-expanded。
+     写法是**幂等**的：每轮先把本组元素的旧标记清掉再重设，
+     所以「先选 A 再选 B」不会在 A 上留一个说它被选中的灵异属性。 */
+  var SELECTED = __SELECTED__;
+  function markSelected(){
+    Object.keys(SELECTED).forEach(function(dom){
+      var root = document.getElementById("app-" + dom);
+      if (!root) return;
+      SELECTED[dom].forEach(function(spec){
+        var sel = spec[0], cls = spec[1], attr = spec[2], val = spec[3], carrier = spec[4];
+        var on = false;
+        if (carrier){
+          var c = root.querySelector(carrier[0]);
+          on = !!(c && c.classList.contains(carrier[1]));
+        }
+        Array.prototype.forEach.call(root.querySelectorAll(sel), function(el){
+          // 「未选中」写成 `"false"` 而不是摘掉属性：三个属性都接受 "false"，
+          // 且 `aria-pressed`/`aria-expanded` 的关键语义是「这是个开关，现在是关的」
+          // —— 把属性摘掉，屏幕阅读器就不再把它当开关读了。
+          el.setAttribute(attr, (carrier ? on : !!(cls && el.classList.contains(cls))) ? val : "false");
+        });
+      });
+    });
   }
 })();
 """
@@ -693,7 +727,10 @@ def _assemble(*, body: list[str], head_assets: str, health: dict,
 <script>
 {SHELL_JS.replace("__DOMAINS__", repr(DOMAINS)).replace("__DEFAULT__", default_domain)
          .replace("__REACH__", json.dumps({k: list(v) for k, v in KEYBOARD_REACH.items()},
-                                          ensure_ascii=False))}
+                                          ensure_ascii=False))
+         .replace("__SELECTED__", json.dumps(
+             {k: [list(s) for s in v] for k, v in ARIA_SELECTED.items()},
+             ensure_ascii=False))}
 </script>
 </body>
 </html>

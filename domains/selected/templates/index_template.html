@@ -644,6 +644,14 @@ var BT_META = {
 </script>
 <script>
 "use strict";
+/* ★ 三域会被合并进**同一个文档**（web/build.py 的单页壳）：`.nav-item` / `.view`
+   这些类名在别的域里也有（短线策略的侧栏条目就叫 `.nav-item`）—— 从 document
+   全局查会把手伸进别人的域。实测缺陷：全局 `.nav-item` 绑点击 → 短线域的侧栏条目
+   也被绑上本页的 handler，点一下就跑 `switchView(null)`，把 stock 四个 `.view`
+   的 `.active` 全摘掉 —— 切回「个性化选股」是一片空白（导航高亮也一起消失）。
+   故一律从**自己的根**往下查。
+   单独构建（domains/selected/scripts/build_html.py，外面没有 `.qh-app` 包层）时退回 document。 */
+var ROOT = (document.currentScript && document.currentScript.closest(".qh-app")) || document;
 /* ===== 工具 ===== */
 function $(id){return document.getElementById(id);}
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
@@ -654,10 +662,9 @@ function toast(msg){
 }
 function openModal(id){$(id).classList.add("show");}
 function closeModal(id){$(id).classList.remove("show");}
-document.querySelectorAll(".modal-overlay").forEach(function(m){
+ROOT.querySelectorAll(".modal-overlay").forEach(function(m){
   m.addEventListener("click",function(e){if(e.target===m)m.classList.remove("show");});
 });
-
 /* ===== 状态 ===== */
 var watchlist = WATCH_DEFAULT.map(function(s){return {name:s.name,style:s.style,vec:s.vec.slice()};});
 var selectedRec = null;
@@ -667,9 +674,9 @@ var currentView = "home";
 /* ===== 导航路由 ===== */
 function switchView(view){
   currentView = view;
-  document.querySelectorAll(".view").forEach(function(v){v.classList.remove("active");});
+  ROOT.querySelectorAll(".view").forEach(function(v){v.classList.remove("active");});
   var el=$("view-"+view); if(el) el.classList.add("active");
-  document.querySelectorAll(".nav-item").forEach(function(n){
+  ROOT.querySelectorAll(".nav-item").forEach(function(n){
     n.classList.toggle("active", n.getAttribute("data-view")===view);
   });
   var tags={home:"智能选股引擎",factors:"36 因子库",backtest:"回测验证",about:"方案说明"};
@@ -679,7 +686,7 @@ function switchView(view){
   if(view==="backtest") renderBacktest();
   window.scrollTo(0,0);
 }
-document.querySelectorAll(".nav-item").forEach(function(n){
+ROOT.querySelectorAll(".nav-item").forEach(function(n){
   n.addEventListener("click",function(){switchView(n.getAttribute("data-view"));});
 });
 $("hamburger").addEventListener("click",function(){
@@ -851,7 +858,7 @@ function renderRecs(ranked){
 }
 function selectRec(r){
   selectedRec=r;
-  document.querySelectorAll(".rec-item").forEach(function(el,i){
+  ROOT.querySelectorAll(".rec-item").forEach(function(el,i){
     el.classList.toggle("sel", selectedRec&&rankedCache[i]&&selectedRec.stock.name===rankedCache[i].stock.name);
   });
   renderExplain(r);

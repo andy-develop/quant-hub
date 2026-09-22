@@ -289,10 +289,103 @@ python -m tools.data_pipeline.verify --data-root data
 
 ### 遗留事项
 
-- 键盘 shim 只补了 `tabindex` + `role`，**没补 `aria-pressed`/`aria-current`**：
-  选中态只对眼睛可见，屏幕阅读器读不出「当前在哪一页」。待专项。
+- 键盘 shim 只补了 `tabindex` + `role`，当时**没补 `aria-pressed`/`aria-current`**
+  （选中态只对眼睛可见）→ 已交下一节「选中态语义（aria）」补上。
 - 自选/搜索结果等弹窗内的节点靠 observer 事后补标记，**弹出瞬间到 60ms 之间**键盘不可达（实测无感，但理论上存在）。
 
+
+---
+
+## 选中态语义（aria）+ 跨域脚本隔离（2026-09-22 三补）
+
+### 1. 选中态的语义
+
+三域都用「加一个类名」表示「我被选中」——`on`（短线域）/`active`（stock）/`cur`（etf）。
+类名只对眼睛可见：实测 Tab 到导航条目按回车**真的切了页**，但 `aria-*` 一个都没有，
+屏幕阅读器里毫无提示。
+
+改在壳层（不动模板）：`scope.ARIA_SELECTED` 把类名翻成 aria，`build.SHELL_JS` 的
+`markSelected()` **幂等**重算（每轮先重设本组全部元素）。
+
+| 域 | 元素 | 类名 | aria |
+|---|---|---|---|
+| 短线策略 | `.side .nav-item` | `on` | `aria-current="page"` |
+| 短线策略 | `.tab`（区间 chip）/ `.mode-btn` | `on` | `aria-pressed="true"` |
+| ETF | `[data-key]`（`.lv1`/`.lv2`） | `cur` | `aria-current="page"` |
+| ETF | `.lv1` | `open` | `aria-expanded` |
+| ETF | `.menu-btn` | 载体 `.sidebar.open` | `aria-expanded` |
+| 选股 | `.nav-item` / `[data-f]` / `[data-rec]` | `active`/`active`/`sel` | `aria-current`/`aria-pressed` |
+| 选股 | `.hamburger` | 载体 `.sidebar.show` | `aria-expanded` |
+| 壳层 | `.qh-tab` | `on` | `aria-current="page"` |
+
+### 2. 跨域脚本隔离（顺带找到的真缺陷）
+
+做上面那件事时发现：**点「短线策略」侧栏→回到「个性化选股」是一页空白。**
+
+根因不是 aria，是三域模板各自当「独立整页」写的（各带自己的 `build_html.py`），合并进
+单页壳后共享**同一个 document**：stock 的脚本用 `document.querySelectorAll(".nav-item")`
+绑点击，而**短线域的侧栏条目恰好也叫 `.nav-item`** —— 于是被一起绑上了 stock 的 handler。
+点一下就跑 `switchView(null)`（它们只有 `data-page`，没有 `data-view`），
+而 `switchView` 里的 `.view` 也是全局查 → stock 四个 `.view` 的 `.active` 全被摘掉，
+导航高亮同时消失。切回去就是空白（不是报错，所以一直没发现）。
+
+修法：域脚本改从**自己的根**往下查。stock 模板顶部：
+
+```js
+var ROOT = (document.currentScript && document.currentScript.closest(".qh-app")) || document;
+```
+
+`.qh-app` 是壳层给每个域包的层（`scope.theme_block`），单独构建时没有这层 → 退回 `document`，
+**两个构建都成立**。共收 5 处：`.modal-overlay` / `.view` / `.nav-item` ×2 / `.rec-item`。
+
+碰撞体检（合并页实测）：stock 的 `.view` 还会抹 etf 的 `.view.active`（etf 不用这个类，
+目前无害但同属一类地雷）；`.side .nav-item`（短线域）打不中 stock（stock 只有 `.sidebar`，没有 `.side`）。
+
+### 改动文件
+
+| 文件 | 说明 |
+|---|---|
+| `web/shell/scope.py` | 新增 `ARIA_SELECTED` |
+| `web/build.py` | `SHELL_JS` 新增 `markSelected()` + `__SELECTED__` 占位；`show()` 给 `.qh-tab` 落 `aria-current`；观察器加 `attributeFilter:["class"]` |
+| `domains/selected/templates/index_template.html` | 新增 `ROOT`，5 处全局类名查询改为从 `ROOT` 查 |
+| `tests/web/test_aria_state.py` | 新增 8 条（含「载体不许写 id」） |
+| `tests/web/test_domain_isolation.py` | 新增 8 条（静态跨域碰撞检测 + stock 5 处已收） |
+| `docs/handoff/HANDOFF.md` | 本节 |
+
+### 关键决策（勿破坏）
+
+1. **未选中写 `"false"`，不摘属性**：三个属性都接受 `"false"`，而 `aria-pressed`/`aria-expanded`
+   的关键语义是「这是个开关，现在是关的」—— 摘掉属性就不再被当开关读了。
+2. **载体一律用类名，绝不用 id**：`#sidebar`（etf 与 stock 都有）会被 `scope._namespace_ids`
+   改名为 `#etf__sidebar`/`#stock__sidebar`。写 `#sidebar` 时 `root.querySelector` 返回 null，
+   规则**静默全空**（按钮永远 `aria-expanded="false"`，页面上看不出任何报错）。
+3. **不上 `role="tablist"`**：`role="tab"` 有整套硬要求（组内方向键、`aria-controls`、
+   `role="tabpanel"`），做半套比不做更糟。顶部 tag 用「按钮 + `aria-current`」，
+   真要上 tablist 得连方向键一起做（待专项）。
+4. **观察器只多听 `class`**（`attributeFilter`）：选中态就是换类名；不听属性全量，
+   我们自己写的 `aria-*`/`tabindex` 就不会触发回环。
+5. **隔离只改 stock**：`.side`/`.page`（短线域）与 etf（无全局类名查询）实测整体打不中外域，
+   不动它们；用例改用「静态碰撞检测」而不是一刀切「不许全局查」。
+
+### 验证记录
+
+- `pytest tests --ignore=tests/incident` **260 passed / 7 skipped**（`tests/web` 90 → 106）
+- 用例非空洞：把 `.nav-item` 那处改回全局查，两条用例立刻红
+- 一致性断言（逐项操作后比对）：**类名选中的元素集合 == aria 标为选中的集合**，
+  三域 + 顶部 tag 全部一致；七步交互（点短线侧栏 / 切区间 chip / 切 etf / 点目录树 /
+  切 stock / 点因子库）零 `pageerror`
+- 键盘行为：Enter/Space 切页与切 chip，aria 双向跟随（动量策略⇄量化黑盒）
+- 跨域缺陷：改前点短线域侧栏后 stock 的 `view-home` 丢 `active`、主区空高 1044px（空白）；
+  改后 `view-home=block`、主区 1417px（有内容）
+- `scorecard.py` / `check_all.py`：与上轮持平（字号阶/对比度/触点/横溢全绿，三域 + 黑盒页 0 pageerror）
+
+### 遗留事项
+
+- 顶部三个 tag 是「按钮 + `aria-current`」，**不是** `role="tablist"`：屏幕阅读器能听到
+  「当前在哪一页」，但不会听到「1/3」。上 tablist 要连方向键一起做。
+- 弹出/抽屉里的元素仍靠 60ms 防抖补标记（实测无感）。
+- 同类地雷排查方式已沉淀为用例（静态跨域碰撞检测）；但只覆盖 `document.querySelector*`
+  这一种写法，`document.querySelectorAll` 之外的（如手写 `getElementsByClassName`）没盖到。
 
 ---
 
