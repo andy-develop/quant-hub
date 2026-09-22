@@ -294,12 +294,90 @@ def _shell_css(css: str = SHELL_CSS) -> str:
         css = css.replace(k, subs[k])
     return css
 
+SHELL_BOOT_JS = """
+(function(){
+  "use strict";
+  /* ★ hash 归属域（详见 docs/handoff/HANDOFF.md「hash 归属域」一节）
+     三域模板各自把 location.hash 当自己的路由（etf `#/hongli`、stock `#/factors`…），
+     合并后共用一条地址栏，而三家的 hashchange 监听器都在听同一个事件：
+       · 切域后按浏览器返回键 → hash 是上一个域的路由，当前域的 handler 认不出、
+         另一个域的 handler 又没在看 → 页面纹丝不动、地址栏却是旧的（“返回键失灵”）；
+       · 两家路由名撞车时，还会在**看不见的域**里偷偷把视图切了（改状态、不报错）。
+     这里给 hash 划归属，域模板一个字没改：
+       · 域脚本注册 hashchange 时打上自己的门牌（`__QH_DOMAIN`，见 `_domain_section`），
+         只有「自己正在看」且「这条 hash 不是别人写的」才响应；
+       · 每域记住自己最后那条 hash，切域时各归各位（切回来还是原来那一页）；
+       · 壳层兜底：从返回键/深链进来一条属于别域的 hash，就切到那个域去。
+     ★ 这段必须**跑在所有域脚本之前**（放在 head 里）：那些监听器是在域脚本里
+       同步注册的，放在页尾再打 patch 就已经晚了。 */
+  var QH = window.__QH = {active: null, mem: {}, owner: {}};
+  var add = window.addEventListener.bind(window);
+  window.addEventListener = function(type, fn, opt){
+    if (type !== "hashchange" || typeof fn !== "function" || !window.__QH_DOMAIN){
+      return add(type, fn, opt);
+    }
+    var own = window.__QH_DOMAIN;
+    return add(type, function(ev){
+      if (QH.active !== own) return;                      // 不是我在看 → 别域的路由不接
+      var h = location.hash || "";
+      if (h && QH.owner[h] && QH.owner[h] !== own) return;  // 这条 hash 是别人写的 → 交给壳层切域
+      QH.mem[own] = h;
+      // ★ 空 hash **不认领**：认领了的话，壳层兜底那一步会把「没有 hash」当成
+      //   「上个写手的地盘」，一切到不带 hash 的域就被拨回去（实测：Home+回车 切不动）
+      if (h) QH.owner[h] = own;
+      return fn.call(this, ev);
+    }, opt);
+  };
+  // 壳层自己的监听器要**绕过** patch —— 它不属于任何一域（也不该被门牌挡住）
+  QH.onHash = function(fn){ add("hashchange", fn); };
+})();
+"""
+
 SHELL_JS = """
 (function(){
   "use strict";
   var DOMAINS = __DOMAINS__;
   var DEFAULT = "__DEFAULT__";
+  var QH = window.__QH || {active: null, mem: {}, owner: {}, onHash: function(){}};
+
+  function fireHash(){
+    var ev;
+    try { ev = new HashChangeEvent("hashchange"); } catch(e){ ev = new Event("hashchange"); }
+    window.dispatchEvent(ev);
+  }
+  /* 地址栏回到「这一域自己的那条 hash」（切域时用）。
+     mode : "push"（默认，用户自己点/按键盘切域 = 一次真导航，**该留历史**，
+            返回键才能回到上一个域）/ "replace"（壳层在响应返回键，只改当前这条，
+            否则按一次返回又新增一条，返回键就永远退不出去）。
+     两种都不用 `location.hash = x`：它只会在**当前记录**上改 hash，语义不如
+     pushState/replaceState 明确，且 pushState 不触发原生事件、我们手补一次，
+     由 patch 把事件只发给「该域 + 该 hash 的主人」。 */
+  function syncHash(dom, mode){
+    var h = location.hash || "";
+    var target = QH.mem[dom] || (h && QH.owner[h] === dom ? h : "");
+    // 没有记忆（这一域还没导航过）→ 地址栏只标域名（`#etf`，与深链格式一致），
+    // 刷新/分享时才不会丢掉「我在哪一域」；有记忆则回到它自己那一页。
+    var url = target || "#" + dom;
+    // ★ 写下去的是**这一域自己的** hash，要当场记上归属：
+    //   不记的话，紧接着补的那次 hashchange 会被壳层当成「外来路由」→ 又切回去 →
+    //   两域来回弹到爆栈（实测：返回键连按两次就 `Maximum call stack size exceeded`）。
+    if (target) QH.owner[target] = dom;
+    // 比的是 url 不是 target：新域没记忆时 target 为空，但地址栏得写成 `#域`
+    if (h !== url) {
+      try { history[mode === "replace" ? "replaceState" : "pushState"](null, "", url); }
+      catch(e){ return; }
+    }
+    fireHash();
+  }
   function show(dom, push){
+    // 离开前把这一域停在哪条 hash 上记下来（切回来还是原来那一页）。
+    // ★ 只记**属于它自己**的 hash：此刻地址栏里可能正躺着上一域的 hash
+    //   （壳层刚响应完返回键、还没归位），记下来就把两域的记忆串了。
+    var cur = location.hash || "";
+    if (QH.active && QH.active !== dom && cur && QH.owner[cur] === QH.active){
+      QH.mem[QH.active] = cur;
+    }
+    QH.active = dom;
     DOMAINS.forEach(function(d){
       var el = document.getElementById("qh-domain-" + d);
       if (el) el.classList.toggle("on", d === dom);
@@ -308,13 +386,53 @@ SHELL_JS = """
         tb.classList.toggle("on", d === dom);
         // 选中态只对眼睛可见是不行的（屏幕阅读器读不出「现在在哪一页」）
         tb.setAttribute("aria-current", d === dom ? "page" : "false");
+        tb.setAttribute("aria-selected", d === dom ? "true" : "false");
+        // tablist 的走位规矩：只有当前这一枚在 Tab 序列里，其余靠方向键进
+        tb.setAttribute("tabindex", d === dom ? "0" : "-1");
       }
     });
-    try { if (push !== false) history.replaceState(null, "", "#" + dom); } catch(e){}
+    if (push !== false) syncHash(dom, push);
     // 切换后让各域的 echarts resize（隐藏时初始化会算出 0 宽）
     window.dispatchEvent(new Event("resize"));
   }
   window.qhShow = show;
+
+  /* 顶部三个 tag = 真 tablist（`role=tab` / `role=tabpanel`），方向键在标签间移动焦点。
+     用**手动激活**：方向键只挪焦点，回车/空格才切域 —— 切域要重建 ECharts，
+     自动激活会在按住右箭头时连切两域、每个都重画一遍图。
+     （标签是原生 `<button>`，回车/空格本来就激活，不需要额外映射。） */
+  function bootTabs(){
+    var list = document.querySelector('[role="tablist"]');
+    if (!list) return;
+    var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+    function focusTab(i){
+      var t = tabs[(i + tabs.length) % tabs.length];
+      tabs.forEach(function(x){ x.setAttribute("tabindex", x === t ? "0" : "-1"); });
+      t.focus();
+    }
+    list.addEventListener("keydown", function(e){
+      var i = tabs.indexOf(document.activeElement);
+      if (i < 0) return;
+      var k = e.key;
+      if (k === "ArrowRight" || k === "ArrowDown") focusTab(i + 1);
+      else if (k === "ArrowLeft" || k === "ArrowUp") focusTab(i - 1);
+      else if (k === "Home") focusTab(0);
+      else if (k === "End") focusTab(tabs.length - 1);
+      else return;
+      e.preventDefault();   // 方向键默认会滚页
+    });
+  }
+
+  /* 返回键/深链进来的 hash：是别的域写的就切过去（本域的由上面的 patch 直接放行）。 */
+  function bootHash(){
+    QH.onHash(function(){
+      var h = location.hash || "";
+      var d = h.replace("#", "");
+      if (DOMAINS.indexOf(d) < 0) d = QH.owner[h] || "";
+      if (d && DOMAINS.indexOf(d) >= 0 && d !== QH.active) show(d, "replace");
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function(){
     var h = (location.hash || "").replace("#", "");
     var init = DOMAINS.indexOf(h) >= 0 ? h
@@ -323,7 +441,9 @@ SHELL_JS = """
     Array.prototype.forEach.call(document.querySelectorAll(".qh-tab"), function(b){
       b.addEventListener("click", function(){ show(b.getAttribute("data-domain")); });
     });
+    bootTabs();
     bootKeyboard();
+    bootHash();
   });
 
   /* ★ 键盘可达性底线（见 scope.py 的 KEYBOARD_REACH）
@@ -360,12 +480,11 @@ SHELL_JS = """
     markReachable();
     markSelected();
     if (!window.MutationObserver) return;
-    var pending = null;
-    var sync = function(){ pending = null; markReachable(); markSelected(); };
-    new MutationObserver(function(){
-      if (pending) return;
-      pending = setTimeout(sync, 60);
-    }).observe(document.body, {childList: true, subtree: true,
+    /* 动态渲染出来的节点（因子筛选、自选列表、弹窗都是 innerHTML 重绘的）要立刻补标记：
+       用 setTimeout 防抖会有「弹窗已经弹出来、键盘却还没法进」的窗口期（实测无感但真实存在），
+       而这里改了属性也不会回环 —— 观察器只听 `class`，而我们补的是 tabindex/aria。 */
+    new MutationObserver(function(){ markReachable(); markSelected(); })
+      .observe(document.body, {childList: true, subtree: true,
                                attributes: true, attributeFilter: ["class"]});
   }
 
@@ -556,6 +675,20 @@ CDN_ECHARTS_LOADER_RE = re.compile(
     r'[\s\S]*?<\/script>')
 
 
+def _domain_section(key: str, frag: str) -> str:
+    """一个域的整段（样式 + 结构）。外面这层还兼两块门牌：
+
+    - `role=tabpanel` + `aria-labelledby` → 顶部 tag 的 tablist 指过来；
+    - `window.__QH_DOMAIN` → 域脚本注册 hashchange 时知道自己是谁（见 `SHELL_BOOT_JS`）。
+      ★ 标记脚本必须在域内容**之前**：三域的 hashchange 监听器都是在自己的
+        `<script>` 里同步注册的，晚一步就归档到别人名下。
+    """
+    return (f'<section class="qh-domain" data-domain="{key}" id="qh-domain-{key}" '
+            f'role="tabpanel" aria-labelledby="qh-tab-{key}">\n'
+            f'<script>window.__QH_DOMAIN="{key}";</script>\n'
+            f'{frag}\n</section>')
+
+
 def duplicate_ids(fragments: dict[str, str]) -> set[str]:
     """跨片段重名的 id 名集合（本仓实测 = `{"sidebar"}`）。
 
@@ -621,10 +754,7 @@ def build(src_root: str, out_path: str, *, health: dict | None = None,
 
     body: list[str] = []
     for key, title, note in NAV:
-        body.append(
-            f'<section class="qh-domain" data-domain="{key}" id="qh-domain-{key}">\n'
-            + frags[key] + "\n</section>"
-        )
+        body.append(_domain_section(key, frags[key]))
 
     # 默认落在"第一个有真实数据"的域，避免一开页就是空的短线域（用户会以为"完全没数据"）
     def _has_data(dom: str) -> bool:
@@ -671,7 +801,9 @@ def _derive_health(envelopes: dict) -> dict:
 def _assemble(*, body: list[str], head_assets: str, health: dict,
               default_domain: str = "quant-lab") -> str:
     tabs = "\n".join(
-        f'  <button class="qh-tab" id="qh-tab-{k}" data-domain="{k}">{t}'
+        f'  <button class="qh-tab" id="qh-tab-{k}" data-domain="{k}" role="tab"'
+        f' aria-controls="qh-domain-{k}" aria-selected="{"true" if k == default_domain else "false"}"'
+        f' tabindex="{"0" if k == default_domain else "-1"}">{t}'
         f'<span class="qh-note">{n}</span></button>'
         for k, t, n in NAV)
 
@@ -698,6 +830,9 @@ def _assemble(*, body: list[str], head_assets: str, health: dict,
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <title>量化中枢 · 短线策略 / ETF 策略 / 个性化选股</title>
 {head_assets}
+<script>
+{SHELL_BOOT_JS}
+</script>
 <style>
 {_shell_css()}
 </style>
@@ -708,7 +843,7 @@ def _assemble(*, body: list[str], head_assets: str, health: dict,
     <span class="qh-logo">量化中枢</span>
     <span class="qh-logo-en">Quant Hub</span>
   </div>
-  <nav class="qh-tabs">
+  <nav class="qh-tabs" role="tablist" aria-label="策略域切换">
 {tabs}
   </nav>
   <div class="qh-stamp">

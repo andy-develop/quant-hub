@@ -381,11 +381,126 @@ var ROOT = (document.currentScript && document.currentScript.closest(".qh-app"))
 
 ### 遗留事项
 
-- 顶部三个 tag 是「按钮 + `aria-current`」，**不是** `role="tablist"`：屏幕阅读器能听到
-  「当前在哪一页」，但不会听到「1/3」。上 tablist 要连方向键一起做。
-- 弹出/抽屉里的元素仍靠 60ms 防抖补标记（实测无感）。
-- 同类地雷排查方式已沉淀为用例（静态跨域碰撞检测）；但只覆盖 `document.querySelector*`
-  这一种写法，`document.querySelectorAll` 之外的（如手写 `getElementsByClassName`）没盖到。
+- ~~顶部三个 tag 不是 `role="tablist"`，方向键没做~~ → 已补，见下一节。
+- ~~弹出/抽屉里的元素靠 60ms 防抖补标记~~ → 已改成同步，见下一节。
+- ~~同类地雷只盖了 `document.querySelector*` 一种写法~~ → 已扩到 4 种 + document 委托，见下一节。
+
+---
+
+## top tag = 真 tablist、hash 归属域、跨域碰撞体检扩面（2026-09-22 四补）
+
+### 1. 顶部三个 tag = 真 tablist（方向键 + 手动激活）
+
+改前它们只是「长得像标签的按钮」：AT 读到三个孤立按钮，听不出这是一组、
+也不知道哪个是当前。现在是标准模式：
+
+```
+<nav class="qh-tabs" role="tablist" aria-label="策略域切换">
+  <button role="tab" aria-controls="qh-domain-etf" aria-selected="true" tabindex="0">
+<section id="qh-domain-etf" role="tabpanel" aria-labelledby="qh-tab-etf">
+```
+
+- 方向键：`←/→/↑/↓` 在标签间移焦点，`Home`/`End` 到首尾，都 `preventDefault`（否则滚页）；
+- **手动激活**：方向键只挪焦点，回车/空格才切域。理由：切域要重建 ECharts，
+  自动激活时按住右箭头会连切两域、每个都重画一遍图；
+- roving tabindex：只有当前那一枚在 Tab 序列里（其余 `-1`，靠方向键进），
+  所以「整组 = 一个 Tab 落点」。标签本身是原生 `<button>`，回车/空格不用额外映射。
+
+### 2. hash 归属域（★ 本轮修的是真缺陷）
+
+三域模板各自把 `location.hash` 当自己的路由（etf `#/timing-hs300`、stock `#/factors`），
+合并后共用一个地址栏，而三家的 `hashchange` 监听器都在听同一个事件。实测两个后果：
+
+1. **返回键失灵**：切域后按返回，hash 是上一个域的路由 —— 当前域的 handler 认不出、
+   另一个域的 handler 又没在看 → 页面纹丝不动，地址栏却是旧的；
+2. **跨域偷偷改状态**：路由名一旦撞车，别域的 handler 会在**看不见的域**里把视图切了
+   （改状态、不报错）—— 和上一节那个空白页同一类问题。
+
+修法（域模板一个字没改，全在壳层）：
+
+| 机制 | 位置 | 作用 |
+|---|---|---|
+| `window.__QH_DOMAIN` 门牌 | `_domain_section`（域内容**之前**） | 域脚本注册 hashchange 时知道自己是谁 |
+| `addEventListener` patch | `SHELL_BOOT_JS`（**放 head**） | 只把事件发给「自己正在看 + 这条 hash 不是别人写的」那一家 |
+| 每域 hash 记忆 | `SHELL_JS.show()/syncHash()` | 切域各归各位（切回来还是原来那一页） |
+| 壳层兜底 | `SHELL_JS.bootHash()` | 从返回键/深链进来一条别域的 hash → 切到那个域去 |
+
+URL 约定没变（**不改成 `#域/子页`**）：`#域` = 深链到该域，`#/xxx` = 当前域的域内路由。
+新域（还没导航过）地址栏写 `#域` 而不是清空 —— 刷新/分享不丢「我在哪一域」。
+
+### 3. 跨域碰撞体检扩到 4 种写法 + document 委托
+
+上一节的用例只盖了 `document.querySelector*`。同一类地雷还有：
+
+- `document.getElementsByClassName("x")`（连选择器都不用写）
+- `document.body.querySelector*` / `document.documentElement.querySelector*`
+- `document.getElementsByTagName("div")`（抓的是三家的 div，一律不许）
+- `document.addEventListener("click"|"keydown"|…)` 委托 + `e.target.closest(".类名")`
+  （`closest` 是**向上**走的，跨过域边界轻而易举）
+
+前三种走同一套碰撞判据（选择器里每个类名 token 都在对方源码里出现过 = 命中）；
+第四种直接禁（三域现在都绑自己的容器，如 `$("watchList")`，保持住）。
+
+### 4. 弹出/抽屉里的节点：60ms 防抖 → 同步
+
+动态渲染出来的节点（因子 chip、搜索结果、自选列表、抽屉）以前靠 `setTimeout(sync, 60)`
+补键盘标记 —— 弹窗已经弹出来、键盘却还没法进，那个窗口期理论存在。现在观察器回调里
+直接同步补：不会回环，因为观察器只听 `class`，而我们补的是 `tabindex`/`aria`。
+实测：搜出结果**同一帧**就已有 `tabindex=0 role=button`。
+
+### 改动文件
+
+| 文件 | 说明 |
+|---|---|
+| `web/build.py` | 新增 `SHELL_BOOT_JS`（hash 门牌 patch，放 head）、`_domain_section()`（tabpanel + 门牌）；`SHELL_JS` 新增 `bootTabs()`/`bootHash()`/`syncHash()`；`show()` 管 `aria-selected`/roving tabindex/hash 记忆 |
+| `tests/web/test_top_tabs.py` | 新增 9 条 |
+| `tests/web/test_hash_isolation.py` | 新增 10 条 |
+| `tests/web/test_domain_isolation.py` | +7 条（另外三种写法 + document 委托） |
+
+### 关键决策（勿破坏）
+
+1. **boot patch 必须在 head**：域脚本在解析时就**同步**注册 hashchange，放页尾再 patch 就晚了。
+2. **壳层自己的监听器走 `QH.onHash`**：走 patch 会被门牌挡住（那时 `__QH_DOMAIN`
+   停在最后一个域，等于把整条兜底逻辑归档给了它）。
+3. **空 hash 不认领**（踩过）：认领了，壳层兜底会把「没有 hash」当成「上个写手的地盘」，
+   一切到不带 hash 的域就被拨回去（实测：Home+回车切不动）。
+4. **壳层写下的 hash 当场记归属**（踩过）：不记的话，紧接着补发的那次 hashchange 被当
+   外来路由 → 两域来回弹到爆栈（实测：返回键连按两次 `Maximum call stack size exceeded`）。
+5. **记「我停在哪」时验归属**：离开一域时地址栏里可能正躺着上一域的 hash（壳层刚响应完
+   返回键、还没归位），照抄下来就把两域记忆串了；memory 串了就开始乒乓。
+6. **用户切域 = `pushState`，壳层响应返回 = `replaceState`**：前者是真导航（返回键才退得
+   回去），后者再 push 就永远退不出去。两种都不直接写 `location.hash`。
+7. **不给顶部 tag 做自动激活**：切域要重建 ECharts，按住方向键会连切连画。
+8. **不改 URL 方案为 `#域/子页`**：要保证域 handler 读到它熟悉的形状，就得在事件前把
+   地址栏换回旧形（或包一层 `location`），得不偿失；归属机制已经达到同样的隔离效果。
+
+### 验证记录
+
+- `pytest tests --ignore=tests/incident` **286 passed / 7 skipped**（`tests/web` 106 → 132）
+- 方向键：焦点 `短线→ETF→个性化选`，域不变（手动激活）；回车才切；`scrollY` 保持 0
+- 回归一致性：**类名选中的集合 == aria 标为选中的集合**，三域 + 顶部 tag 七步交互全一致
+- 切域各归各位：stock 在 `#/factors` → 切 etf（hash 归空）→ 点 etf 目录 → **切回 stock
+  仍是 `#/factors` + `view-factors` + 导航高亮**；切回 etf 仍是 `#/timing-hs300`
+- 返回/前进：返回 → stock `#/factors`；再返回 → etf `#/timing-hs300`；前进 → stock `#/factors`，
+  **0 `pageerror`**（改前这一步是 `Maximum call stack size exceeded` ×6）
+- 深链：`#etf` / `#stock` 直接落到对应域；新域切过去后**刷新仍在同一域**
+- 动态节点：搜出结果同一帧已 `tabindex=0 role=button`；抽屉开、因子 chip、自选条目均补上
+- `check_all.py` / `scorecard.py`：三域 + 黑盒页 1440/390 全 0 `pageerror`，
+  字号阶/对比度/触点/横溢与上轮持平
+
+### 遗留事项
+
+- 旧式域内深链（如 `#/factors`）刚打开时，**可见域**仍是「第一个有数据的域」（改前行为）：
+  stock 只把自己的视图切到了 factors，壳层不知道该 hash 属于谁（归属只在 hashchange 时记）。
+  要改就得让各域在初始化时上报自己的落地 hash（跨域耦合），暂不做。
+- hash 名字一旦真撞车，**首个认领者**永久占位（今天三家前缀不同，实测无重叠）。
+- `#域` 这种标记载荷的语义：切到新域时地址栏写它，但域内一导航就被真实路由顶掉 ——
+  分享时应分享哪一条，取决于想让人看到「域」还是「域里那一页」。
+- （有意保留，不是待办）顶部 tag 两行（含副标题）、域内药丸单行：两者**同一套形状令牌**
+  （白底/发丝边/4px/13px），差的是内容形状 —— 顶部是域级导航、带副标题；
+  域内是筛选药丸。统一成一样会把信息删掉。
+- （有意保留，不是待办）etf/stock 侧栏仍是 `NAV_ITEM` 而不是标签：etf 是 8 条层级目录树
+  （`.lv1/.lv2/.lv3` 带缩进）、stock 4 条，套上边框会变成一列盒子，反而更难扫。
 
 ---
 

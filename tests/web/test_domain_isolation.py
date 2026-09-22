@@ -34,6 +34,21 @@ _SCRIPTS = {
 }
 
 _GLOBAL_QUERY_RE = re.compile(r'document\.querySelector(?:All)?\(\s*["\']([^"\']+)["\']')
+# 同一类危险还有几种写法（都是「从 document 全局抓一把」）：
+#   document.getElementsByClassName("a")        —— 直接就是类名，连选择器都不用写
+#   document.body.querySelectorAll(".x")         —— body 也是全局
+#   document.documentElement.querySelector(...)  —— 同上
+#   document.getElementsByTagName("div")         —— 按标签抓，抓的是三家的 div
+_GLOBAL_CLASS_QUERY_RE = re.compile(
+    r'document\.(?:body|documentElement)?\.?getElementsByClassName\(\s*["\']([^"\']+)["\']')
+_GLOBAL_SCOPED_QUERY_RE = re.compile(
+    r'document\.(?:body|documentElement)\.querySelector(?:All)?\(\s*["\']([^"\']+)["\']')
+_GLOBAL_TAG_QUERY_RE = re.compile(r'document\.getElementsByTagName\(\s*["\']([^"\']+)["\']')
+# 事件委托：绑在 document 上的监听 + 在 handler 里用 `e.target.closest(".类名")`
+# —— closest 是**向上**走的，跨过域边界轻而易举（三域都包在 `.qh-app` 里，
+#   但 body/document 上的委托会先接到别域的点击）。
+_DOC_DELEGATION_RE = re.compile(
+    r'document\.addEventListener\(\s*["\'](click|mousedown|mouseup|keydown|keyup|input|change|focus)')
 _CLASS_RE = re.compile(r"\.([a-zA-Z][\w-]*)")
 
 
@@ -53,6 +68,15 @@ def _declared_classes(src: str) -> set[str]:
     return toks
 
 
+def _collisions(dom: str, selector: str) -> list[str]:
+    """`selector` 整体能不能命中别的域的元素（判据：每个类名 token 都在对方源码里）。"""
+    toks = _CLASS_RE.findall(selector)
+    if not toks:
+        return []
+    return [o for o in _SCRIPTS
+            if o != dom and all(t in _DECLARED[o] for t in toks)]
+
+
 _ALL = {d: _source(d) for d in _SCRIPTS}
 _DECLARED = {d: _declared_classes(s) for d, s in _ALL.items()}
 
@@ -70,19 +94,49 @@ def test_global_class_queries_cannot_match_another_domain(domain):
       · `.side .nav-item`（quant-lab 里的）→ 打不中 stock（stock 只有 `.sidebar`，没有 `.side`）
     """
     for sel in _GLOBAL_QUERY_RE.findall(_ALL[domain]):
-        toks = _CLASS_RE.findall(sel)
-        if not toks:
-            continue
-        for other in _SCRIPTS:
-            if other == domain:
-                continue
-            if all(t in _DECLARED[other] for t in toks):
-                pytest.fail(
-                    f"{domain} 的全局查询 {sel!r} 整体能命中 {other} 的元素 —— "
-                    "合并后会跨域误伤（stock 的 `.nav-item` 就是这么翻的车："
-                    "点短线域侧栏 → stock 四个 .view 的 .active 全被摘掉 → 空白页）。"
-                    "请改成从自己的根往下查（见 stock 模板顶部的 ROOT）。"
-                )
+        for other in _collisions(domain, sel):
+            pytest.fail(
+                f"{domain} 的全局查询 {sel!r} 整体能命中 {other} 的元素 —— "
+                "合并后会跨域误伤（stock 的 `.nav-item` 就是这么翻的车："
+                "点短线域侧栏 → stock 四个 .view 的 .active 全被摘掉 → 空白页）。"
+                "请改成从自己的根往下查（见 stock 模板顶部的 ROOT）。"
+            )
+
+
+@pytest.mark.parametrize("domain", sorted(_SCRIPTS))
+def test_other_global_query_styles_are_guarded_too(domain):
+    """★ 同一类地雷的另外三种写法（第一版用例只盖了 `document.querySelector*`）。
+
+    `getElementsByClassName` / `document.body|documentElement.querySelector*`
+    一样是「从全局抓一把」，用同一套碰撞判据。
+    """
+    src = _ALL[domain]
+    found = []
+    for m in _GLOBAL_CLASS_QUERY_RE.findall(src):
+        found += [(t, sel) for t in m.split() for sel in ["." + t]]
+    found += [(None, s) for s in _GLOBAL_SCOPED_QUERY_RE.findall(src) if "." in s]
+    for _tok, sel in found:
+        for other in _collisions(domain, sel):
+            pytest.fail(f"{domain} 的全局查询（{sel!r}）能命中 {other} 的元素")
+
+
+@pytest.mark.parametrize("domain", sorted(_SCRIPTS))
+def test_domain_scripts_do_not_delegate_from_document(domain):
+    """★ 绑在 `document` 上的点击/键盘委托同样跨域：三域的节点都在同一个 document 里，
+    委托的 handler 会先接到别域的点击，再用 `e.target.closest(".类名")` **向上**走到
+    别域的容器上。现在三域都是绑自己的容器（`$("watchList")` 这种），保持住。"""
+    hit = _DOC_DELEGATION_RE.findall(_ALL[domain])
+    assert not hit, (
+        f"{domain} 把 {hit} 委托绑在了 document 上 —— 合并后三个域的节点都在同一个 "
+        "document 里，会互相接住对方的点击。请绑到本域自己的容器上。"
+    )
+
+
+def test_no_global_element_queries_by_tag_name():
+    """★ `document.getElementsByTagName("div")` 抓的是三家的 div，一律不许。"""
+    for dom, src in _ALL.items():
+        tags = _GLOBAL_TAG_QUERY_RE.findall(src)
+        assert not tags, f"{dom} 按标签从 document 全局抓元素：{tags}"
 
 
 def test_stock_root_falls_back_for_the_standalone_build():
