@@ -11,6 +11,56 @@
 
 ---
 
+## 个股数据链故障与恢复（2026-09-22）
+
+**故障现象**：2026-09-14 起 `data-stock-incr` 定时任务连续失败，个股数据仓停在 09-11
+（index/etf 正常）。三根因 + 数据缺口全部定位、修复、回补并验证。
+
+### 根因（3 个独立缺陷）
+
+| # | 缺陷 | 位置 | 修复 |
+|---|---|---|---|
+| 1 | `detect_dividends` 把 `prev_raw` **元组直接除** → `TypeError`，stock 增量 09-14 起崩溃 | `stock_incr.py` | 取元组第二元素（commit f2a7ff4 + 7674a11） |
+| 2 | `csindex.backfill_daily` **整月覆盖**抹掉同月其他 code | `csindex.py` | 改为逐月合并/补缺 |
+| 3 | `csindex.fetch_csi_rows` **空返回不重试** → ETF 抓取偶发缺日 | `csindex.py` | 空返回重试 |
+
+另：GitHub push 偶发网络故障（HTTP2 framing / 443 超时）→ 三个 data-*.yml 均加
+**push 失败重试 3 次 + `git pull --rebase --autostash`**（commit 3540fbb）。
+
+### 数据恢复（写回补脚本全量补齐）
+
+- **index / etf**：内容等价分区还原 HEAD + 真实变更提交（sh000852 2026-09-21 保留），
+  verify 全绿，远程 data-index / data-etf-incr 09-21 排程均 success。
+- **stock 缺日 2026-09-14..21**：全 A（universe 5215）新浪日K回补
+  （`CN_MarketData.getKLineData`，scale=240；**腾讯 ifzq 已被 IP 限流禁用**；
+  新浪 volume 单位为**股**，amount 兜底 = close×vol）。抓取 5209 有效帧/fail=6，
+  断点缓存 `/tmp/stock_gap_cache.parquet` + 连续失败 10 只 sleep 90s 节流。
+- **封存**：`seal_partition` 只收集该月 `_incr` 整月重建 → **直接调用会覆盖丢既有封存
+  （09-01..11）**。用合并脚本（读 封存+_incr → 去重 → 重建 month=09 → 删 _incr →
+  更新 manifest）封存：raw 65121 行/5210 codes、hfq 65911 行/5211 codes、
+  09-01..21，sealed=true。commit `42656aa`。
+- **手动 dispatch 验证**（run 35676511273）：data-stock-incr **success**（目标日 09-21
+  增量已存在 → 合法幂等跳过，链路完整跑通）。远程 CI 自动提交 runlog + 09-22 数据
+  `db33858`。本地 verify 全绿。
+
+### 关键经验
+
+1. **封存前先合并**：`seal_partition` 语义是「该月 `_incr` 分片 → 整月分区」，绝不适用于
+   「分区已有数据 + 补缺 _incr」场景，必须先读全量合并再重建。
+2. **内容哈希别用 `.tobytes()`**：Arrow string 列会序列化指针地址 → 等价内容每次哈希
+   不同（index 清理时踩坑），改用 dtype 规范化 + `DataFrame.equals()` 值级比较。
+3. **数据源限流**：腾讯 ifzq 全量批量拉会被 IP 封禁（空响应），新浪日K是可靠备源；
+   回补脚本需断点续传 + 节流。
+
+### 遗留事项
+
+- stock 回补 6 只 fail（约 12 只缺 09-21 数据，多为停牌/新上市），下一交易日 schedule
+  自然覆盖，无需人工。
+- 本次新浪回补 amount 为兜底口径（close×vol），与腾讯源一致；如后续发现与官方成交额
+  有出入，可对该 6 日局部重拉。
+
+---
+
 ## 三域外观统一（2026-09-21，commit 见 PR）
 
 把三域从「三套独立长出来的外观」统一为同一套视觉规范：配色令牌、容器宽度、卡片处理、
