@@ -136,6 +136,19 @@ def check_manifests(root, problems):
     return n
 
 
+def check_events(root, cal, pd, problems):
+    """事件型表（龙虎榜/涨停复盘）契约校验：列⊆定义、主键无重复、日期在日历内。"""
+    from common.store.events import check_event_table
+    from common.store.schema import EVENT_TABLES
+    total = 0
+    for name in sorted(EVENT_TABLES):
+        n = check_event_table(root, name, pd, problems, calendar=cal)
+        total += n
+        if n:
+            print(f"[i] events/{name}: {n} 个分区")
+    return total
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="数据仓自检（§2.3/§2.7）")
     ap.add_argument("--data-root", default=os.environ.get("QH_DATA_ROOT", "data"))
@@ -156,8 +169,9 @@ def main(argv=None) -> int:
     n_daily = check_daily(root, cal, pd, problems)
     n_derived = check_derived(root, pd, problems)
     n_man = check_manifests(root, problems)
+    n_events = check_events(root, cal, pd, problems)
 
-    print(f"[i] 校验 daily 分区 {n_daily} · 派生 {n_derived} · manifest {n_man}")
+    print(f"[i] 校验 daily 分区 {n_daily} · 派生 {n_derived} · manifest {n_man} · events {n_events}")
     if problems:
         print(f"[✗] 发现 {len(problems)} 个问题：")
         for p in problems[:60]:

@@ -158,6 +158,108 @@ INDEX_SPECIAL: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# 事件型数据表（2026-09-22 新增，独立于 K 线资产类）
+# ---------------------------------------------------------------------------
+# 事件型数据（龙虎榜 / 涨停复盘）主键不是 (code, date)，不能进 market/<asset> 分区：
+#   - 龙虎榜一票多因，同 (date, code) 可多次上榜，锚点是东财 TRADE_ID
+#   - 涨停复盘是"全市场某日状态"，天然按日聚合
+# 统一放 data/events/<table>/（封存 year=/month=/batch= + _incr/YYYYMMDD/），
+# 读写走 common/store/events.py，manifest 放 data/manifest/events_<table>.json。
+# 列类型与 COLUMNS 同风格（pyarrow 标注）。
+EVENT_TABLES: dict[str, dict] = {
+    "lhb_detail": {
+        "title": "龙虎榜主表（东财 RPT_DAILYBILLBOARD_DETAILSNEW，全历史回补+日增量）",
+        "primary_key": ("date", "code", "trade_id"),
+        "columns": {
+            "date": "date32",
+            "code": "string[pyarrow]",          # 短代码 600000
+            "name": "string[pyarrow]",
+            "market": "string[pyarrow]",        # SH / SZ / BJ
+            "trade_id": "int64",                # 东财事件 ID（一票多因的锚点）
+            "reason": "string[pyarrow]",        # 上榜原因（EXPLANATION 文本）
+            "reason_tag": "string[pyarrow]",    # 上榜说明（EXPLAIN，如"实力游资买入"）
+            "change_type": "string[pyarrow]",   # CHANGE_TYPE 内部编码
+            "close": "float64",
+            "change_rate": "float64",
+            "turnover_rate": "float64",
+            "free_market_cap": "float64",
+            "acc_amount": "float64",            # 当日成交额（元）
+            "buy_amount": "float64",            # 龙虎榜买入额（元）
+            "sell_amount": "float64",           # 龙虎榜卖出额（元）
+            "net_amount": "float64",            # 净买额（元）
+        },
+    },
+    "lhb_seat": {
+        "title": "龙虎榜买卖席位明细（东财 RPT_BILLBOARD_DAILYDETAILSBUY/SELL，全历史）",
+        "primary_key": ("date", "code", "trade_id", "side", "seat_code"),
+        "columns": {
+            "date": "date32",
+            "code": "string[pyarrow]",
+            "trade_id": "int64",
+            "side": "string[pyarrow]",          # buy / sell
+            "seat_code": "string[pyarrow]",     # OPERATEDEPT_CODE（营业部代码）
+            "seat_name": "string[pyarrow]",     # 营业部名称（TOP5 从这里取）
+            "buy": "float64",
+            "sell": "float64",
+            "net": "float64",
+            "rank": "int64",                    # 当日该 code+trade_id+side 组内按买卖额降序排名
+        },
+    },
+    "zt_pool": {
+        "title": "涨停池快照（东财 push2ex getTopicZTPool，仅近 ~10 交易日）",
+        "primary_key": ("date", "code"),
+        "columns": {
+            "date": "date32",
+            "code": "string[pyarrow]",
+            "name": "string[pyarrow]",
+            "price": "float64",
+            "change_rate": "float64",
+            "amount": "float64",                # 成交额（元）
+            "free_market_cap": "float64",
+            "total_market_cap": "float64",
+            "turnover_rate": "float64",
+            "seal_amount": "float64",           # 封单资金 fund（元）
+            "first_seal_time": "int64",         # 首次封板时间 fbt（HHMMSS）
+            "last_seal_time": "int64",          # 最后封板时间 lbt（HHMMSS）
+            "break_count": "int64",             # 炸板次数 zbc
+            "limit_board_count": "int64",       # 连板数 lbc
+            "zt_days": "int64",                 # zttj.days（N天M板中的 N）
+            "zt_count": "int64",                # zttj.ct（N天M板中的 M）
+            "industry": "string[pyarrow]",      # 行业板块 hybk
+        },
+    },
+    "zt_daily": {
+        "title": "涨停自算（raw 日K派生，全历史回补+日增量）",
+        "primary_key": ("date", "code"),
+        "columns": {
+            "date": "date32",
+            "code": "string[pyarrow]",
+            "name": "string[pyarrow]",
+            "close": "float64",
+            "change_rate": "float64",
+            "limit_up": "int64",                # 0/1 是否涨停（按板块阈值）
+            "limit_count": "int64",             # 连续涨停数（当日非涨停=0）
+            "m3": "int64",                      # 近3交易日涨停次数（含当日）
+            "m5": "int64",                      # 近5交易日涨停次数
+            "m10": "int64",                     # 近10交易日涨停次数
+            "threshold": "float64",             # 当日涨停阈值（%：10/20/30）
+        },
+    },
+    "zt_ladder": {
+        "title": "连板梯队/晋级率（自算派生，全历史）",
+        "primary_key": ("date", "lbc"),
+        "columns": {
+            "date": "date32",
+            "lbc": "int64",                     # 连板数（1=首板）
+            "count": "int64",                   # 当日该连板数家数
+            "prev_count": "int64",              # 前一交易日（lbc-1）板家数
+            "promote_rate": "float64",          # 晋级率 = 今日 lbc 板家数 / 昨日 (lbc-1) 板家数
+        },
+    },
+}
+
+
 def columns_for(asset: str) -> tuple[str, ...]:
     """返回该资产类的合法列集合（必选 + 可选，按需裁剪）。"""
     if asset not in ASSETS:

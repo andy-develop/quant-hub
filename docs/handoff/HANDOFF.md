@@ -11,7 +11,97 @@
 
 ---
 
-## 个股数据链故障与恢复（2026-09-22）
+## 事件型数据存储：龙虎榜 + 涨停复盘（2026-09-22）
+
+新增**事件型数据**（主键非 `(code, date)`，一票多因/按日聚合），独立于 K 线 asset/fq 体系，
+统一放 `data/events/<table>/`，读写走 `common/store/events.py`，表定义在 `schema.EVENT_TABLES`。
+
+### 需求
+
+1. 龙虎榜：净买额 / 上榜原因 / 营业部席位 TOP5 / 机构动向，按**任意历史日期**查（近3年）
+2. 涨停复盘：连板梯队 / N天M板 / 封单资金 / 涨停原因题材 / 晋级率
+3. 全部日增量自动更新（GitHub Actions 定时）
+
+### 表设计（schema.EVENT_TABLES，5 张）
+
+| 表 | 主键 | 说明 |
+|---|---|---|
+| `lhb_detail` | (date, code, trade_id) | 龙虎榜主表：净买额/上榜原因/买卖总额/机构说明（trade_id 锚一票多因） |
+| `lhb_seat` | (date, code, trade_id, side, seat_code) | 买卖席位明细：营业部名/买/卖/净额/rank（TOP5 从 rank 取） |
+| `zt_pool` | (date, code) | 东财涨停池快照：封单资金/首末封板时间/炸板次数/连板数/N天M板/行业（**仅近~10交易日**） |
+| `zt_daily` | (date, code) | 涨停自算：按板块阈值判涨停 + 连板数 + 近3/5/10日涨停次数（**全历史**） |
+| `zt_ladder` | (date, lbc) | 连板梯队/晋级率：昨日 (k-1) 板 → 今日 k 板 晋升比例 |
+
+### 存储布局与语义
+
+- 封存分区 `events/<table>/year=YYYY/month=MM/batch=00.parquet`（zstd-19）+ 日增量 `_incr/YYYYMMDD/<table>.parquet`
+- manifest：`data/manifest/events_<table>.json`
+- **写入语义**：日增量同行数→跳过；行数不同→主键合并去重重写；**整月封存=整月重建**（先删旧分区
+  再写，并**清该月所有 `_incr/YYYYMM*` 日分片**，防 load_events 重复时旧文件胜出——2026-09-21 华瓷
+  股份连板读回错误就是这踩的坑，`_incr` 目录名是 8 位完整日期，须前缀 glob）
+- **读取**：`load_events(name, dates=[...], start/end, codes, columns, root)`——`dates=` 即"按任意历史日期查"
+
+### 数据源与口径限制（方案决策 2026-09-22）
+
+- 龙虎榜：东财 datacenter `RPT_DAILYBILLBOARD_DETAILSNEW` + `RPT_BILLBOARD_DAILYDETAILSBUY/SELL`，
+  实测支持任意历史交易日（2023-09-18 起验证）。"返回数据为空"（停市/当日盘后未公布）按合法空页处理
+- 涨停池：`push2ex.eastmoney.com/getTopicZTPool`（ut=7eea3edcaed734bea9cbfc24409ed989），**仅近 ~10 交易日**
+- 涨停自算口径：主板 10% / 创业科创 20% / 北交 30%，涨停价=round(prev_close*(1+thr),2)，close>=涨停价-0.001
+- **已知限制**（用户已确认接受"自算+近端快照"主干方案）：
+  1. ST 股 5% 涨停不特殊识别，按板块阈值判（universe 无 ST 标记）
+  2. 涨停原因/题材**无历史公开接口**（东财/同花顺均无），历史用行业板块近似（近10日 zt_pool 有 hybk）
+  3. 封单资金/封板时间仅近10日快照有；更早历史查 zt_daily 自算列
+- 开盘啦源不可用（apph5.kaipanla.com NXDOMAIN；apph5.kaipan.la 海外 IP 本机不可达）→ 未采用
+
+### 脚本
+
+```bash
+# 日增量（workflow data-events-incr.yml，北京 17:10，等 16:40 stock 增量先入库）
+python -m tools.data_pipeline.lhb_incr   --data-root data --writer "data-events@run N"
+python -m tools.data_pipeline.zt_pipeline --data-root data --writer "data-events@run N"
+# 历史回补（近3年，按月封存；涨停快照仅近10日）
+python -m tools.data_pipeline.lhb_incr   --data-root data --backfill 2023-09-01
+python -m tools.data_pipeline.zt_pipeline --data-root data --backfill 2023-09-01
+# 数据仓自检（已接入 check_event_table，events 分区一并校验）
+python -m tools.data_pipeline.verify --data-root data
+```
+
+### 验证记录（2026-09-22 本地全链路）
+
+- 龙虎榜 09-18：detail 58 行/seat 513 行，净买额 TOP5、席位 rank、机构专用席位聚合均正确
+- 涨停自算 09-18：78 只**与东财快照完全一致**；09-21 连板分布 {1:81,2:14,3:5,4:2,5:1} 与快照 lbc 分布吻合
+- zt_ladder 09-21：2板晋级率 21.2%、4板 100%（prev 2 只 → 2 只），华瓷股份 5 连板正确
+- 全量回补完成：zt_daily 347 万行 + zt_ladder 3,352 行（2023-09~2026-09 共 37 个月封存）；
+  lhb_detail + lhb_seat 各 37 个月封存（725 交易日，15 天因停市/盘后未公布合法跳过）
+- 历史日期抽查读回（load_events dates=）：2023-11-10 / 2024-06-14 / 2025-08-15 / 2026-03-10
+  净买额/上榜原因/席位/机构专用全正确；zt_pool 近 10 日窗口正常
+- **verify 全绿**：daily 2570 分区 · 派生 14 · manifest 23 · events 158 分区
+  （契约/不变量/日历/派生一致性/manifest 路径 全过）
+- 事件存储往返/幂等/月份封存清理/缺主键保护：单测全过
+
+### 关键经验（本次踩坑）
+
+1. **字符串列绝不能 to_numeric**：events 归一化把 string[pyarrow] 列打成 NaN（name/reason/seat_name
+   全毁），已按类型分支处理
+2. **连板递推用"前一日连板数"而非"前一日是否涨停"**：`limit_count[i]=limit_count[i-1]+1`，否则
+   3 板以上全被压成 2 板（华瓷股份 5 连板实测）
+3. **增量首日连板全错**：zt_daily 增量依赖已入库历史尾部做连板追溯，**必须先 backfill 再增量**；
+   workflow 顺序 stock→lhb→zt，且事件增量天然在历史回补之后才首次运行
+4. **backfill 幂等必须整月重建**：封存月份时先 rmtree 旧分区再写，同时清该月 `_incr` 日分片
+5. **manifest 与磁盘同步**：`write_event_month` 清理磁盘 `_incr` 分片后，**必须同步移除 manifest
+   里该 `_incr` 条目**（否则 verify 报"分区路径不存在"）——已修：清理后读 manifest 过滤掉被删路径
+6. **`load_events` 过滤后刷新日期 Series**：`dates=`/`start=`/`end=` 逐步过滤后要基于当前 df
+   重算 `d`，否则布尔索引跨 index 触发 reindex 警告
+
+### 遗留事项
+
+- ✅ lhb 全量回补完成 + verify 全绿（2026-09-22）
+- 事件型数据与 K 线不同：**无冻结语义**（同日二次抓取允许按主键合并修正），manifest 无 freeze 断言
+- `zt_pool` 的历史只有近 10 日——每交易日增量自动滚动保留近 10 日窗口，过期日分片不自动删
+  （体积 ~MB 级，暂不清理；如后续要裁剪可加 expire 逻辑）
+- README 未提及 events 目录（遵守"不动 README"约定），如需文档化待后续
+
+---
 
 **故障现象**：2026-09-14 起 `data-stock-incr` 定时任务连续失败，个股数据仓停在 09-11
 （index/etf 正常）。三根因 + 数据缺口全部定位、修复、回补并验证。
