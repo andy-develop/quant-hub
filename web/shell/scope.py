@@ -740,6 +740,14 @@ NAV_ITEM_ON: dict[str, str] = {
 }
 NAV_ITEM_HOVER: dict[str, str] = {"background": "var(--card-2)", "color": "var(--ink)"}
 
+# ★ 短线域的域内导航（动量策略 / 量化黑盒）在用户口径里就是**标签** ——
+#   和顶部 tag（build.py 的 `.qh-tab`）吃**同一份 CHIP 规范**：白底 + 发丝边 +
+#   4px 圆角 → 选中黑底白字。差别只在排布：这里是侧栏里的一列（display:block），
+#   顶部是一行 inline 的按钮。
+#   etf/stock 的侧栏是层级目录树（etf 有 8 条、带缩进），套边框会变成一列盒子，
+#   反而更乱，所以保持「无框条目」的 NAV_ITEM。
+NAV_ITEM_CHIP: dict[str, str] = {**CHIP, "display": "block", "font-weight": "400"}
+
 # 品牌区 / 分组标签 / 静态小药丸：只统一**形状**，语义色保留
 #   ⚠️ 药丸的底色承载语义（候选/观察、风险中/高、共同基因/增强点…），
 #      按用户口径"全部统一"把底色也抹平成白底黑字会**丢信息**，故不动底色。
@@ -793,20 +801,36 @@ COMPONENTS: tuple[tuple[str, dict[str, str], dict[str, tuple[str, ...]]], ...] =
         "stock": (".nav-group .group-label",),
     }),
     ("导航条目", NAV_ITEM, {
-        "quant-lab": (".nav-item",),
         "etf": (".lv1", ".lv2", ".lv3"),
         "stock": (".nav-item",),
     }),
     ("导航条目 · 悬停", NAV_ITEM_HOVER, {
-        "quant-lab": (".nav-item:hover",),
         "etf": (".lv1:hover", ".lv2:hover", ".lv3:hover"),
         "stock": (".nav-item:hover",),
     }),
     ("导航条目 · 选中（黑底白字）",
      {**NAV_ITEM_ON, "transition": "none"}, {
-         "quant-lab": (".nav-item.on",),
          "etf": (".lv1.cur", ".lv2.cur", ".lv3.cur"),
          "stock": (".nav-item.active",),
+     }),
+    # ★ 短线域导航 = 标签：与顶部 tag 同规范（见 NAV_ITEM_CHIP 的注释）。
+    #   选择器写成 `.side .nav-item`（多一档特异性），这样 ≤900px 把导航转成
+    #   横排的 `display:inline-block` 仍然压得住（NAV_MEDIA 里同步加了 .side）。
+    ("短线域导航标签", NAV_ITEM_CHIP, {
+        "quant-lab": (".side .nav-item",),
+    }),
+    ("短线域导航标签 · 悬停", CHIP_HOVER, {
+        "quant-lab": (".side .nav-item:hover",),
+    }),
+    ("短线域导航标签 · 选中（黑底白字）", CHIP_ON, {
+        "quant-lab": (".side .nav-item.on",),
+    }),
+    # 副标题（"趋势质量轮动 · 日频"）也跟顶部 tag 的 .qh-note 对齐：
+    # 模板写的是 opacity:.65 / 行高继承 1.6，顶部是 .78 / 1.25，
+    # 且选中态会从 .nav-item.on 继承到 600 粗体（顶部是 400）
+    ("短线域导航标签 · 副标题",
+     {"font-weight": "400", "line-height": "1.25", "opacity": ".78"}, {
+         "quant-lab": (".side .nav-item .nav-note",),
      }),
     # etf 的 `›`/`▾` 箭头在选中态要跟着变白（否则深底上一枚深色箭头）
     ("导航条目 · 选中箭头", {"color": "inherit", "opacity": ".8"}, {
@@ -943,7 +967,7 @@ NAV_MEDIA: dict[str, dict[str, dict[str, str]]] = {
                   "align-items": "center", "gap": "8px", "padding": "10px 12px"},
         ".side .brand": {"border": "0", "margin": "0", "font-size": "var(--fs-lg)",
                          "padding": "0 8px 0 2px"},
-        ".nav-item": {"display": "inline-block"},
+        ".side .nav-item": {"display": "inline-block"},
         # 移动端放开表格换行：桌面要密排扫读，手机要能读完一行
         "table th": {"white-space": "normal"},
         "table td": {"white-space": "normal", "overflow-wrap": "anywhere"},

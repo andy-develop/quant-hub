@@ -446,10 +446,32 @@ def test_nav_container_width_is_192_everywhere(domain):
 
 @pytest.mark.parametrize("domain", _DOMAINS)
 def test_nav_item_selected_is_black_on_white(domain):
-    """★ 导航条目选中态：黑底白字（统一到 quant-lab 原样式）。"""
-    body = _rule_for(domain, "导航条目 · 选中")
+    """★ 导航条目选中态：黑底白字（统一到 quant-lab 原样式）。
+
+    quant-lab 的域内导航已升级为「标签」规范（见 NAV_ITEM_CHIP），名字不同、
+    口径一致。
+    """
+    key = "短线域导航标签 · 选中" if domain == "quant-lab" else "导航条目 · 选中"
+    body = _rule_for(domain, key)
     assert "background:var(--ink)" in body, f"{domain} 选中态不是黑底: {body}"
     assert "color:#fff" in body, f"{domain} 选中态不是白字: {body}"
+
+
+def test_shortterm_nav_items_are_tags_not_plain_links():
+    """★ 用户口径（2026-09）：短线域的「动量策略 / 量化黑盒」就是标签 ——
+
+    必须和顶部 tag 吃同一份 CHIP 规范（白底 / 发丝边 / 4px 圆角），
+    而不是 NAV_ITEM 那套无框条目。
+    """
+    body = _rule_for("quant-lab", "短线域导航标签")
+    assert f"background:{CHIP['background']}" in body, f"短线域导航不是白底: {body}"
+    assert f"border:{CHIP['border']}" in body, f"短线域导航没有边框: {body}"
+    assert f"border-radius:{CHIP['border-radius']}" in body, f"圆角没跟标签: {body}"
+    assert f"font-size:{CHIP['font-size']}" in body, f"字号没跟标签: {body}"
+    assert "display:block" in body, f"侧栏里必须竖排: {body}"
+    # 目视一眼：nav-item 不再出现在无框条目组里
+    assert "quant-lab" not in dict(
+        (n, t) for n, _p, t in COMPONENTS)["导航条目"]
 
 
 def test_chip_is_white_then_black_on_white():
@@ -573,6 +595,22 @@ def test_shell_tab_uses_same_chip_spec():
     assert f"color:{PALETTE['--ink']}" in base, f"标签默认不是黑字: {base}"
     assert f"background:{PALETTE['--ink']}" in on, f"选中不是黑底: {on}"
     assert "color:#fff" in on, f"选中不是白字: {on}"
+
+
+def test_shell_chip_shape_is_resolved_to_literals():
+    """★ 回归：顶部标签的**形状**也必须落成实参。
+
+    CHIP 里的 `border-radius:var(--r-sm)` / `font-size:var(--fs-md)` 在壳层
+    （`#app-*` 之外）是无效值 —— 浏览器整条丢弃，标签变成方角 + 继承 14px。
+    实测过：`getComputedStyle(.qh-tab).borderRadius === "0px"`。
+    """
+    from web.build import _shell_css
+
+    css = _shell_css()
+    assert "var(--" not in css, "壳层里还有解析不了的自定义属性"
+    base = _rules(css)[".qh-topbar .qh-tab"]
+    assert f"border-radius:{PALETTE['--r-sm']}" in base, f"顶部标签还是方角: {base}"
+    assert f"font-size:{PALETTE['--fs-md']}" in base, f"顶部标签字号没落值: {base}"
 
 
 def test_shell_token_prefix_collision_fixed():

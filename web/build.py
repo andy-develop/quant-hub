@@ -227,16 +227,33 @@ SHELL_CSS = """
 #
 # ★ 顶部导航标签吃的是域内那套「可选中标签」规范（scope.py 的 CHIP）——
 #   壳层在 `#app-*` 之外，拿不到 var(--card)/var(--ink)，所以这里把令牌值
-#   落成实参。**只有色值需要落，形状仍在 CHIP 里**，两边不会各自漂。
+#   落成实参。**形状（圆角/字号）也一并落**，否则 CHIP 里的 var(--r-sm)/
+#   var(--fs-md) 在壳层是无效值，顶部标签会悄悄退回方角 14px（见 _resolve_vars）。
+_VAR_RE = re.compile(r"var\((--[a-z0-9-]+)\)")
+
+
+def _resolve_vars(props: dict[str, str]) -> dict[str, str]:
+    """把 `var(--x)` 落成 PALETTE 里的实参。
+
+    ★ 壳层在 `#app-*` **之外** —— 域内的主题块（`--r-sm`/`--fs-md`…）写在域根上，
+      壳层读不到。不落值的下场实测过：`.qh-tab` 的 `border-radius:var(--r-sm)`
+      整条声明作废（计算值 0px），顶部标签成了**方角**、字号也退回继承的 14px ——
+      跟域内那套 4px / 13px 的标签根本对不上。
+    """
+    return {k: _VAR_RE.sub(lambda m: PALETTE.get(m.group(1), m.group(0)), v)
+            for k, v in props.items()}
+
+
 def _shell_chip() -> dict[str, dict[str, str]]:
     return {
-        "$CHIP": {**CHIP, "background": PALETTE["--card"],
-                  "color": PALETTE["--ink"],
-                  "border": f"1px solid {PALETTE['--line']}"},
-        "$CHIP_HOVER": {**CHIP_HOVER, "color": PALETTE["--ink"],
-                        "border-color": PALETTE["--muted"]},
-        "$CHIP_ON": {**CHIP_ON, "background": PALETTE["--ink"],
-                     "border-color": PALETTE["--ink"], "color": "#fff"},
+        "$CHIP": _resolve_vars({**CHIP, "background": PALETTE["--card"],
+                                "color": PALETTE["--ink"],
+                                "border": f"1px solid {PALETTE['--line']}"}),
+        "$CHIP_HOVER": _resolve_vars({**CHIP_HOVER, "color": PALETTE["--ink"],
+                                      "border-color": PALETTE["--muted"]}),
+        "$CHIP_ON": _resolve_vars({**CHIP_ON, "background": PALETTE["--ink"],
+                                   "border-color": PALETTE["--ink"],
+                                   "color": "#fff"}),
     }
 
 

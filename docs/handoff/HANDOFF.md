@@ -172,6 +172,64 @@ python -m tools.data_pipeline.verify --data-root data
 
 ---
 
+## 域内导航 = 标签：短线域「动量策略 / 量化黑盒」与顶部 tag 同规范（2026-09-22 补）
+
+### 动机
+
+用户口径：「短线策略的导航栏（动量策略 / 量化黑盒）和其他 tag（比如 ETF 策略）保持一致」。
+
+实际是**两个缺陷叠在一起**，不是一个观感偏好：
+
+1. **顶部 tag 悄悄丢了形状**：`CHIP` 里写的是 `border-radius:var(--r-sm)` / `font-size:var(--fs-md)`，
+   而壳层在 `#app-*` **之外** —— 域内主题块写在域根上，壳层读不到这些自定义属性。
+   浏览器整条声明作废：实测 `getComputedStyle(.qh-tab).borderRadius === "0px"`，
+   字号退回继承的 14px。于是顶部标签是**方角 14px**，域内标签是 **4px 13px**，同一套规范的两半对不上。
+   （旧注释写的是「只有色值需要落，形状仍在 CHIP 里」—— 这句是错的，形状也得落。）
+2. **短线域的域内导航是无框条目**：`.nav-item` 走的是 `NAV_ITEM`（无边框、透明底），
+   而顶部 tag 走 `CHIP`（白底 + 发丝边 + 4px 圆角）。两者是两套语言。
+
+### 改动文件
+
+| 文件 | 说明 |
+|---|---|
+| `web/build.py` | 新增 `_VAR_RE` / `_resolve_vars()`；`_shell_chip()` 三个令牌全部过一遍 `var()`→PALETTE 实参 |
+| `web/shell/scope.py` | 新增 `NAV_ITEM_CHIP = {**CHIP, display:block, font-weight:400}`；COMPONENTS 里 quant-lab 从「导航条目」挪到「短线域导航标签」三条 + 副标题一条；`NAV_MEDIA["quant-lab"][".nav-item"]` → `".side .nav-item"` |
+| `tests/web/test_scope.py` | 新增 `test_shortterm_nav_items_are_tags_not_plain_links`、`test_shell_chip_shape_is_resolved_to_literals`；`test_nav_item_selected_is_black_on_white` 按域取语义名 |
+| `docs/handoff/HANDOFF.md` | 本节 |
+
+### 关键决策（勿破坏）
+
+1. **壳层令牌一律 `_resolve_vars()` 落值**：壳层 CSS 里**不允许出现 `var(--`**（有用例锁）。
+   以后往 `$CHIP*` 注入任何新属性，只要带 `var()` 都得过这道，否则又是一条静默失效的声明。
+2. **短线域导航的选择器是 `.side .nav-item`（多一档特异性）**：`NAV_MEDIA` 里 ≤900px 那条
+   `display:inline-block` 必须同步加上 `.side`，否则被组件层压住（组件层在前但特异性高）。
+3. **只有 quant-lab 换成标签**：etf 侧栏是 8 条的层级目录树（`.lv1/.lv2/.lv3` 带缩进），
+   stock 是 4 条，套边框会变成一列盒子，比无框条目更乱 —— 它们保持 `NAV_ITEM`。
+   要一起换，改 COMPONENTS 里那三个域映射即可。
+4. **副标题（`.nav-note`）跟 `.qh-note` 对齐**：`font-weight:400`（选中态会从 `.nav-item.on` 继承到 600）、
+   `line-height:1.25`、`opacity:.78`（模板原值 .65 / 1.6）。
+5. **排布没动**：侧栏里的标签仍是**一列**（`display:block`），顶部仍是**一行**。
+   「保持一致」= 同一份白底/发丝边/4px/13px 的 CHIP 规范，不是把侧栏改成横向药丸行。
+
+### 验证记录
+
+- 本地：`pytest tests --ignore=tests/incident` **232 passed / 7 skipped**（`tests/web` 78 → 80）
+- 程序化比对（本地 1440 / 390，`getComputedStyle`）：
+  `.qh-tab.on/.qh-tab` 与 `.side .nav-item.on/.side .nav-item` **逐项相等** ——
+  bg `#14171C`/`#FFFFFF`、border `1px #14171C`/`1px #E1E4E9`、radius `4px`、
+  padding `6px 14px`、font-size `13px`、font-weight `600/400`；副标题同为 11px / 400 / 14px 高
+- `check_all.py`：三域 + 黑盒页在 1440/390 均 **0 pageerror**，动量 ↔ 黑盒切换正常
+- `scorecard.py`：对比度 0 不达标、无页面横溢、无横向溢出（与改前一致）
+- 侧栏容器 208/208（桌面）、294/294（390px）—— 没有因加边框而挤出滚动条
+
+### 遗留事项
+
+- 顶部 tag 的**内容结构仍是两行**（主标签 + 副标题），而域内标签的药丸（`.tab`/`.mode-btn`）是单行 ——
+  窄屏（≤860px）会隐藏副标题，桌面不隐藏。若以后要「一个标签规范到底」，得连 `.tabs` 的内容形状一起统一。
+- etf/stock 侧栏仍是 `NAV_ITEM`（见决策 3），如要全局统一，改 COMPONENTS 三处映射并补用例。
+
+---
+
 ## 个股数据链故障与恢复（2026-09-22）
 
 **故障现象**：2026-09-14 起 `data-stock-incr` 定时任务连续失败，个股数据仓停在 09-11
