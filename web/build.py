@@ -159,36 +159,66 @@ def load_envelopes(payload_dir: str) -> dict[tuple[str, str], dict]:
 # ★ 色值不写死在这里：用 $TOKEN 占位，构建时从 PALETTE 取值（见 _shell_css）。
 #   否则"统一"只到三域、外壳又成了第二套色。
 SHELL_CSS = """
-.qh-shell{background:$BG;min-height:100vh;margin:0;padding:0;font:14px/1.6 $NUM;}
-.qh-topbar{position:sticky;top:0;z-index:9999;display:flex;align-items:center;gap:8px;
-  background:$BG;color:$INK;min-height:60px;padding:10px 20px;
+/* ★ 报头 = 一张「行情纸」的报头（不是 SaaS 导航栏）：
+   左边是这张纸叫什么、在看哪个域；右边是这张纸是哪一天的、覆盖多少、状态灯。
+   数字走等宽 + tabular-nums —— 这一行就是整个页面的“版本号”，扫一眼就知道
+   手上这份是不是今天的。 */
+.qh-shell{background:$BG;min-height:100vh;margin:0;padding:0;color:$INK;
+  font:14px/1.6 $FONT_TEXT;-webkit-font-smoothing:antialiased;}
+.qh-topbar{position:sticky;top:0;z-index:9999;display:flex;align-items:center;gap:14px;
+  background:$BG;color:$INK;min-height:56px;padding:9px 20px;
   border-bottom:1px solid $LINE;}
-.qh-topbar .qh-logo{font-size:15px;font-weight:700;letter-spacing:.5px;color:$INK;
-  padding-right:18px;margin-right:6px;border-right:1px solid $LINE;}
+.qh-brand{display:flex;align-items:baseline;gap:9px;padding-right:16px;
+  border-right:1px solid $LINE;}
+.qh-brand .qh-logo{font-size:$FS_LG;font-weight:700;letter-spacing:.02em;color:$INK;}
+.qh-brand .qh-logo-en{font-family:$NUM;font-size:$FS_XS;letter-spacing:.12em;
+  color:$MUTED;text-transform:uppercase;}
+.qh-tabs{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .qh-topbar .qh-tab{$CHIP}
 .qh-topbar .qh-tab:hover{$CHIP_HOVER}
 .qh-topbar .qh-tab.on{$CHIP_ON}
-.qh-topbar .qh-tab .qh-note{display:block;font-size:10px;color:$MUTED;font-weight:400;
-  margin-top:-1px;line-height:1.2;}
-.qh-topbar .qh-tab.on .qh-note{color:#fff;opacity:.75;}
-.qh-banner{margin:0;padding:10px 20px;font-size:12.5px;display:flex;gap:16px;
-  align-items:center;background:#FFF8E6;border-bottom:1px solid #F0DDA8;color:$ACCENT;}
-.qh-banner .qh-lamp{width:9px;height:9px;border-radius:50%;display:inline-block;}
-.qh-banner .lamp-green{background:$GREEN}.qh-banner .lamp-yellow{background:$ACCENT}
-.qh-banner .lamp-red{background:$RED}
+.qh-topbar .qh-tab .qh-note{display:block;font-size:$FS_XS;color:$MUTED;font-weight:400;
+  margin-top:1px;line-height:1.25;}
+.qh-topbar .qh-tab.on .qh-note{color:#fff;opacity:.78;}
+.qh-stamp{margin-left:auto;display:flex;align-items:center;gap:16px;
+  font-size:$FS_XS;color:$MUTED;white-space:nowrap;}
+.qh-stamp .qh-lamp{width:8px;height:8px;border-radius:50%;display:inline-block;
+  flex:0 0 auto;}
+.qh-stamp .lamp-green{background:$GREEN}
+.qh-stamp .lamp-yellow{background:$WARN}
+.qh-stamp .lamp-red{background:$RED}
+.qh-stamp b{font-family:$NUM;font-variant-numeric:tabular-nums;font-weight:600;
+  color:$INK;margin-left:5px;}
+/* 警示条：**只在非 green 时出现**。旧版不管状态都挂一条黄条，
+   日常（green）看到的是一个常驻的假警告；现在真有告警才占版面。 */
+.qh-banner{margin:0;padding:9px 20px;font-size:$FS_MD;display:flex;gap:10px;
+  align-items:center;background:$WARNBG;border-bottom:1px solid $WARNLINE;
+  color:$WARNINK;}
 .qh-banner b{font-weight:600;}
-.qh-banner .qh-meta{margin-left:auto;color:#8A7A4E;font-size:11.5px;}
+.qh-banner .qh-meta{margin-left:auto;color:$WARNINK;font-size:$FS_SM;}
 .qh-domain{display:none;}
 .qh-domain.on{display:block;}
-.qh-footer{padding:22px 20px 36px;color:$MUTED;font-size:11.5px;line-height:1.9;
+.qh-footer{padding:22px 20px 36px;color:$MUTED;font-size:$FS_SM;line-height:1.9;
   border-top:1px solid $LINE;margin-top:14px;background:$CARD;}
-.qh-footer code{background:$BG;padding:1px 5px;border-radius:4px;font-size:11px;}
-@media(max-width:760px){
-  .qh-topbar{min-height:auto;flex-wrap:wrap;padding:8px 12px;gap:4px}
-  .qh-topbar .qh-logo{border:0;margin:0;padding-right:8px;font-size:14px}
+.qh-footer b{color:$INK2;}
+.qh-footer code{background:$BG;border:1px solid $LINE;padding:1px 5px;
+  border-radius:$R_SM;font-family:$NUM;font-size:$FS_XS;}
+@media(max-width:860px){
+  .qh-topbar{flex-wrap:wrap;padding:8px 12px;gap:8px}
+  .qh-brand{border:0;padding-right:4px}
   .qh-topbar .qh-tab .qh-note{display:none}
+  .qh-stamp{margin-left:0;width:100%;gap:14px;border-top:1px solid $LINE;padding-top:7px}
   .qh-banner{flex-wrap:wrap;gap:8px}
   .qh-banner .qh-meta{margin-left:0}
+}
+/* ★ 可达性底线（全站、不按域）：键盘焦点环 + 减少动效。
+   壳层 CSS 在 <head>、先于三域样式，而模板里散着 `outline:none`
+   （stock 的 .search-box input 就是）—— 同优先级靠文档顺序必输，故用
+   `!important` 压过：否则键盘用户在一大片可点元素上完全看不到焦点在哪。 */
+:focus-visible{outline:2px solid $PRIMARY !important;outline-offset:2px;}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
+    transition-duration:.001ms !important;scroll-behavior:auto !important;}
 }
 """
 
@@ -215,10 +245,23 @@ _SHELL_TOKENS = {
     "$CARD": PALETTE["--card"],
     "$CARD2": PALETTE["--card-2"],
     "$INK": PALETTE["--ink"],
+    "$INK2": PALETTE["--ink2"],
     "$LINE": PALETTE["--line"],
     "$MUTED": PALETTE["--muted"],
-    "$ACCENT": PALETTE["--accent"],
+    "$PRIMARY": PALETTE["--primary"],
+    # ★ 壳层在 `#app-*` 之外，拿不到 var(--font-text)/var(--r-sm) 这些域内令牌
+    #   （主题块是写在域根上的），所以字体/字号/圆角也得落成实参。
+    "$FONT_TEXT": PALETTE["--font-text"],
     "$NUM": PALETTE["--num"],
+    "$FS_XS": PALETTE["--fs-xs"],
+    "$FS_SM": PALETTE["--fs-sm"],
+    "$FS_MD": PALETTE["--fs-md"],
+    "$FS_LG": PALETTE["--fs-lg"],
+    "$R_SM": PALETTE["--r-sm"],
+    "$WARNBG": PALETTE["--warn-bg"],
+    "$WARNLINE": PALETTE["--warn-line"],
+    "$WARNINK": PALETTE["--warn-ink"],
+    "$WARN": PALETTE["--warn"],
     "$GREEN": PALETTE["--down"],
     "$RED": PALETTE["--up"],
 }
@@ -269,13 +312,136 @@ def _read(path: str) -> str:
         return f.read()
 
 
+_HTML_TEMPLATE_RE = re.compile(r'HTML_TEMPLATE\s*=\s*r"""(.*?)"""', re.S)
+
+
+def _html_template(src: str) -> str:
+    """build_report.py 里的内层 HTML_TEMPLATE（**未渲染**，占位符还在）。"""
+    m = _HTML_TEMPLATE_RE.search(src)
+    if not m:
+        raise ValueError("未找到 HTML_TEMPLATE")
+    return m.group(1)
+
+
 def _extract_from_report_py(path: str) -> str:
     """quant-lab 的 HTML_TEMPLATE 内嵌在 build_report.py 的 r-string 里。"""
-    src = _read(path)
-    m = re.search(r'HTML_TEMPLATE\s*=\s*r"""(.*?)"""', src, re.S)
+    return _html_template(_read(path))
+
+
+# ---------------------------------------------------------------------------
+# 短线域「双页」装配：render_html() 的纯标准库复刻
+# ---------------------------------------------------------------------------
+# 域内 build_report.render_html() 会做两件事，合并层必须一起做，否则线上就是
+# 「页面显示 __STRAT_DOC__ 字面量 + 侧栏『量化黑盒』点进去空白 + 加载即 JS 报错」：
+#   ① 按 PAGE_BLOCK 标记把动量页克隆成黑盒页（id 加 bb_ 前缀）—— 两页各自一份
+#      DOM、共用 tail 里的一套 initPage；缺了克隆，initPage('bb_') 找不到
+#      bb_rangeTabs 直接抛 TypeError，后续初始化整段中断。
+#   ② 替换 __STRAT_DOC__ / __ST_BANNER__ / __MAX_HOLD__ 三个占位符。
+# 但 render_html 依赖 pandas/numpy（要读 parquet 算 KPI、生成 ST 横幅），而合并层
+# 被要求仅用标准库（见 ci.yml），且旧仓布局的 domains/ 未必有 data/。所以：
+#   - 文案 / 持有上限：从域源码**抽取**，不复制一份（单一真相源）；
+#   - KPI 表：直接用统一信封 payload 里的 equity/trades 现算（纯 Python）；
+#   - ST 横幅：留空 —— 它是「ST 数据新鲜度」告警，需要读 parquet；合并页顶部
+#     的状态灯/数据日由壳层统一给出，域内不重复再挂一条。
+_QL_DOC_RE = re.compile(r'^STRAT_DOC\s*=\s*"""(.*?)"""', re.S | re.M)
+_QL_DOC_BB_RE = re.compile(r'STRAT_DOC_BB\s*=\s*\((.*?)\)\s*\n\s*\n', re.S)
+_QL_P_MOM_RE = re.compile(r'^_P_MOM\s*=\s*"""(.*?)"""', re.S | re.M)
+_QL_P_BB_RE = re.compile(r'^_P_BB\s*=\s*"""(.*?)"""', re.S | re.M)
+_QL_LIT_REPLACE_RE = re.compile(r'\.replace\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)')
+_QL_MAX_HOLD_RE = re.compile(r'^MAX_HOLD\s*=\s*(\d+)', re.M)
+_PAGE_START = "<!--PAGE_BLOCK_START-->"
+_PAGE_END = "<!--PAGE_BLOCK_END-->"
+
+
+def _quant_lab_docs(src: str) -> tuple[str, str]:
+    """从 build_report.py 源码抽出（动量版, 黑盒版）策略说明。
+
+    黑盒版在原文件里是 `STRAT_DOC_BB = (STRAT_DOC.replace(_P_MOM, _P_BB).replace(...))`
+    —— 这里照着算一遍，省得文案改一处、合并页看的是另一处。
+    """
+    m = _QL_DOC_RE.search(src)
     if not m:
-        raise ValueError(f"未在 {path} 找到 HTML_TEMPLATE")
+        raise ValueError("未在 build_report.py 找到 STRAT_DOC")
+    doc, bb = m.group(1), m.group(1)
+    pm, pb = _QL_P_MOM_RE.search(src), _QL_P_BB_RE.search(src)
+    if pm and pb:
+        bb = bb.replace(pm.group(1), pb.group(1))
+    region = _QL_DOC_BB_RE.search(src)
+    if region:      # 只扫 STRAT_DOC_BB 表达式内，别把 render_html 里的 .replace 也吃进来
+        for a, b in _QL_LIT_REPLACE_RE.findall(region.group(1)):
+            bb = bb.replace(a, b)
+    return doc, bb
+
+
+def _max_hold(src_root: str) -> str:
+    """持有上限的权威来源：域内 engine.MAX_HOLD。"""
+    p = os.path.join(_base(src_root, "quant-lab"), "scripts/engine.py")
+    m = _QL_MAX_HOLD_RE.search(_read(p))
+    if not m:
+        raise ValueError(f"未在 {p} 找到 MAX_HOLD")
     return m.group(1)
+
+
+def _kpi_stats(p: dict) -> dict | None:
+    """从单一全期 payload 现算 收益/回撤/夏普/交易/胜率（纯 Python，口径同域内）。"""
+    eq = [float(x) for x in (p.get("equity") or [])]
+    if len(eq) < 2:
+        return None
+    d = [eq[i] / eq[i - 1] - 1 for i in range(1, len(eq))]
+    mean = sum(d) / len(d)
+    sd = (sum((x - mean) ** 2 for x in d) / (len(d) - 1)) ** 0.5 if len(d) > 1 else 0.0
+    peak, mdd = eq[0], 0.0
+    for v in eq:
+        peak = max(peak, v)
+        mdd = min(mdd, v / peak - 1)
+    tr = p.get("trades") or []
+    win = sum(1 for t in tr if (t.get("pnl_pct") or 0) > 0) / len(tr) if tr else 0.0
+    return {"ret": eq[-1] / eq[0] - 1, "maxdd": mdd,
+            "sharpe": mean / sd * (244 ** 0.5) if sd > 0 else 0.0,
+            "trades": len(tr), "winrate": win}
+
+
+def _kpi_block_html(modes: dict, model: str) -> str:
+    """策略说明里的 KPI 对比表（对齐域内 _kpi_block_* 的列与口径）。"""
+    w = (modes or {}).get("y3") or {}
+    on, off = _kpi_stats(w.get("on") or {}), _kpi_stats(w.get("off") or {})
+    if not on or not off:
+        return '<p class="note">暂无回测数据（构建时未注入 payload）。</p>'
+
+    def row(label, m):
+        return (f'<tr><td>{label}</td><td class="{"up" if m["ret"] >= 0 else "down"}">'
+                f'<b>{m["ret"]:+.1%}</b></td><td>{m["maxdd"]:.1%}</td>'
+                f'<td>{m["sharpe"]:.2f}</td><td>{m["trades"]}</td>'
+                f'<td>{m["winrate"]:.1%}</td></tr>')
+
+    p_on = w["on"]
+    return ('<table><tr><th>口径</th><th>收益</th><th>最大回撤</th><th>夏普</th>'
+            '<th>交易</th><th>胜率</th></tr>'
+            + row("开 (默认)", on) + row("关", off) + '</table>'
+            f'<p class="note">数据区间 {p_on.get("start_day", "—")} ~ {p_on.get("last_day", "—")}'
+            f' · 评分模型 {model} · 夏普口径 √244</p>')
+
+
+def _assemble_quant_lab(src: str, src_root: str, envelopes: dict) -> str:
+    """内层 HTML_TEMPLATE → 合并页可用的短线域片段（动量页 + 黑盒页）。"""
+    head, rest = _html_template(src).split(_PAGE_START, 1)
+    block, tail = rest.split(_PAGE_END, 1)
+    bb = block.replace('id="page-momentum"', 'id="page-blackbox" style="display:none"')
+    bb = re.sub(r'id="(?!page-)', 'id="bb_', bb)
+
+    doc_m, doc_bb = _quant_lab_docs(src)
+
+    def page(html: str, doc: str, variant: str, model: str) -> str:
+        payload = (envelopes.get(("quant-lab", variant)) or {}).get("payload") or {}
+        return html.replace("__STRAT_DOC__",
+                            doc.replace("__KPI_BLOCK__", _kpi_block_html(payload, model)))
+
+    html = (head
+            + page(block, doc_m, "momentum", "六项指标加权排队")
+            + page(bb, doc_bb, "blackbox", "LightGBM lambdarank (walk-forward 滚动训练)")
+            + tail)
+    return (html.replace("__ST_BANNER__", "")
+                .replace("__MAX_HOLD__", _max_hold(src_root)))
 
 
 def _inline_echarts(root: str) -> str:
@@ -324,15 +490,17 @@ def build(src_root: str, out_path: str, *, health: dict | None = None,
                   stock-factor-engine/ 三个子目录）。
     health   : 可选的健康状态 {"level": "green|yellow|red", "day": "2026-09-11", ...}
     payload_dir : 可选，`state/payload/` 目录（统一信封入口）。
-                  给了就注入真实数据；不给则保留占位符（页面显示空态）。
+                  给了就注入真实数据；不给则注入合法空值（页面走自带空态）。
     """
     frags: dict[str, str] = {}
     ech = _inline_echarts(src_root) if echarts_inline else ""
     envelopes = load_envelopes(payload_dir) if payload_dir else {}
 
     # ---- 域 1：短线策略（模板内嵌在 build_report.py）----
-    ql = _extract_from_report_py(os.path.join(_base(src_root, "quant-lab"), "scripts/build_report.py"))
-    ql = inject_payloads(ql, "quant-lab", envelopes)
+    # 先装配（克隆黑盒页 + 替换文案占位符），再注入 payload
+    ql_path = os.path.join(_base(src_root, "quant-lab"), "scripts/build_report.py")
+    ql = inject_payloads(_assemble_quant_lab(_read(ql_path), src_root, envelopes),
+                         "quant-lab", envelopes)
 
     # ---- 域 2：ETF 策略 ----
     etf = _read(os.path.join(_base(src_root, "red-dividend-strategy"), "index_template.html"))
@@ -368,23 +536,44 @@ def build(src_root: str, out_path: str, *, health: dict | None = None,
 
     # 默认落在"第一个有真实数据"的域，避免一开页就是空的短线域（用户会以为"完全没数据"）
     def _has_data(dom: str) -> bool:
-        for (d, _v), e in envelopes.items():
-            if d != dom:
-                continue
-            pl = e.get("payload")
-            if isinstance(pl, dict) and any(pl.values()):
-                return True
-            if isinstance(pl, list) and pl:
-                return True
-        return False
+        return any(_envelope_filled(e) for (d, _v), e in envelopes.items() if d == dom)
 
     default_domain = next((d for d in DOMAINS if _has_data(d)), DOMAINS[0])
-    html = _assemble(body=body, head_assets=head_assets, health=health or {},
+    html = _assemble(body=body, head_assets=head_assets,
+                     health=health or _derive_health(envelopes),
                      default_domain=default_domain)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
     return html
+
+
+def _envelope_filled(e: dict) -> bool:
+    """信封里的 payload 是不是真有东西（空字典 / 空列表都算无数据）。"""
+    pl = e.get("payload")
+    if isinstance(pl, dict):
+        return any(pl.values())
+    return bool(pl)
+
+
+# 状态词用中文：这是一张中文行情纸，报头上挂一个 GREEN 是给机器看的
+_LEVEL_CN = {"green": "正常", "yellow": "注意", "red": "异常"}
+
+
+def _derive_health(envelopes: dict) -> dict:
+    """没有外部健康信息时，从信封自己读。
+
+    ★ 旧版 `main()` 和发布工作流都不传 health，于是报头恒显示
+      「数据状态：GREEN · 数据日 — · 覆盖率 —」—— 一张没有日期的行情纸，
+      而“哪天数据”恰恰是这个页面最该说的一句话。数据日直接取信封的 `data_date`，
+      覆盖率 = 有数据的域 / 总域数。
+    """
+    days = sorted({str(e.get("data_date")) for e in envelopes.values()
+                   if e.get("data_date")})
+    filled = sum(1 for d in DOMAINS
+                 if any(_envelope_filled(e) for (dd, _v), e in envelopes.items() if dd == d))
+    return {"level": "green", "day": days[-1] if days else "—",
+            "coverage": filled / len(DOMAINS)}
 
 
 def _assemble(*, body: list[str], head_assets: str, health: dict,
@@ -397,8 +586,17 @@ def _assemble(*, body: list[str], head_assets: str, health: dict,
     lvl = health.get("level", "green")
     day = health.get("day", "—")
     cov = health.get("coverage")
-    cov_txt = f"覆盖率 {cov:.1%}" if isinstance(cov, (int, float)) else "覆盖率 —"
+    cov_txt = f"{cov:.0%}" if isinstance(cov, (int, float)) else "—"
     extra = health.get("note", "")
+
+    # 警示条只在真有告警时占版面（旧版无论什么状态都挂着一条黄条，
+    # 于是 green 的日常天也在报警 —— 告警一富有含义，天天报就不算报警了）。
+    banner = ""
+    if lvl != "green":
+        banner = ('\n<div class="qh-banner">\n'
+                  f'  <span><b>数据状态：{_LEVEL_CN.get(lvl, lvl)}</b></span>\n'
+                  + (f'  <span class="qh-meta">{extra}</span>\n' if extra else "")
+                  + '</div>')
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -406,7 +604,7 @@ def _assemble(*, body: list[str], head_assets: str, health: dict,
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<title>Quant Hub · 量化中枢</title>
+<title>量化中枢 · 短线策略 / ETF 策略 / 个性化选股</title>
 {head_assets}
 <style>
 {_shell_css()}
@@ -414,17 +612,23 @@ def _assemble(*, body: list[str], head_assets: str, health: dict,
 </head>
 <body class="qh-shell">
 <header class="qh-topbar">
-  <span class="qh-logo">Quant Hub</span>
+  <div class="qh-brand">
+    <span class="qh-logo">量化中枢</span>
+    <span class="qh-logo-en">Quant Hub</span>
+  </div>
+  <nav class="qh-tabs">
 {tabs}
-</header>
-<div class="qh-banner">
-  <span class="qh-lamp lamp-{lvl}"></span>
-  <span><b>数据状态：{lvl.upper()}</b> · 数据日 {day} · {cov_txt}</span>
-  {f'<span class="qh-meta">{extra}</span>' if extra else ''}
-</div>
+  </nav>
+  <div class="qh-stamp">
+    <span class="qh-lamp lamp-{lvl}"></span>
+    <span>数据日<b>{day}</b></span>
+    <span>覆盖<b>{cov_txt}</b></span>
+    <span>状态<b>{_LEVEL_CN.get(lvl, lvl)}</b></span>
+  </div>
+</header>{banner}
 {chr(10).join(body)}
 <footer class="qh-footer">
-  <div><b>Quant Hub</b> —— 短线策略 / ETF 策略 / 个性化选股 三域合并单页。</div>
+  <div><b>量化中枢</b> —— 短线策略 / ETF 策略 / 个性化选股 三域合并单页。</div>
   <div>数据与代码分离：代码公开于 <code>quant-hub</code>，行情数据私有于 <code>quant-hub-data</code>。</div>
   <div>本页为静态快照，不构成投资建议。全站视觉统一（配色令牌见 <code>web/shell/scope.py</code>），涨跌色为中国惯例：<b>红涨绿跌</b>。</div>
 </footer>

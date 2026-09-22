@@ -103,6 +103,77 @@ python -m tools.data_pipeline.verify --data-root data
 
 ---
 
+## 三域「行情纸」二次统一 + 短线域双页装配修复（2026-09-22）
+
+### 动机
+
+一次统一后仍有存量问题，且发现一个更严重的**既有功能缺口**：
+
+1. **字体没真正统一**：`scope.py` 的字体重写正则字符类漏了连字符 `-`，
+   `font:14px/1.6 -apple-system,…` 在 `-` 处断掉 → quant-lab(302 节点)/stock(141 节点)
+   整域卡在旧字体栈，等宽数字没生效，而记分卡看起来「只剩 1 支字体」（假绿）。
+2. **可达性无底线**：模板里散着 `outline:none`，键盘用户看不到焦点在哪；无 reduced-motion 降级。
+3. **旧调色板残留**：`UNIFY_MAP` 只认第一次统一后的新值，旧 PALETTE 原值仍有残留
+   （`.sub-h`/`.doc h3` 旧墨、`tr:hover td` 旧卡底、图表坐标轴旧灰 `#88867E`，3.3:1）。
+4. **短线域「双页」从未装配**（主缺口）：`web/build.py` 只抽内层 `HTML_TEMPLATE`，
+   没跑 `build_report.render_html()` 的两步。线上后果：
+   - 页面顶部挂着字面量 `__ST_BANNER__`、「策略说明」卡里是 `__STRAT_DOC__`、
+     页脚 `持有满__MAX_HOLD__日退出`；
+   - 侧栏「量化黑盒」死链：`showPage('blackbox')` 指向不存在的 `#page-blackbox`，点进去空白；
+   - 加载即 `TypeError: ... reading 'addEventListener'`：`initPage('bb_')` 找不到
+     `bb_rangeTabs`，黑盒页整段初始化中断。
+
+### 改动文件
+
+| 文件 | 说明 |
+|---|---|
+| `web/shell/scope.py` | 字体正则补 `-`（`_FONT_DECL_RE`/`_FONT_VALUE_OK`）；新增 `unify_type()`（字号阶/圆角档/字体收敛）、`unify_ink()`（涨跌**文字档** `--up-ink/--down-ink`）；`UNIFY_MAP` 补旧 PALETTE 原值兜底 |
+| `web/build.py` | 壳层 `SHELL_CSS` 末尾加全局 `:focus-visible` 与 `prefers-reduced-motion`（用 `!important` 压过模板 `outline:none`）；新增 `_assemble_quant_lab()` 及配套（`_quant_lab_docs`/`_max_hold`/`_kpi_stats`/`_kpi_block_html`），短线域双页在合并层完成装配 |
+| `tests/web/test_shortterm_pages.py` | 新增 7 条回归：双页存在、无占位符、黑盒页 DOM 齐全、KPI 分页现算、克隆后 id 唯一且引用可达、端到端产物干净 |
+| `docs/handoff/HANDOFF.md` | 本节 |
+
+### 关键决策（勿破坏）
+
+1. **字体统一用正则、不写字面量表**：同一支栈有单/双引号两种写法，字体还可能藏在
+   `font:` 简写里。值的字符类**必须含 `-`**（`-apple-system`/`ui-monospace`/`JetBrains Mono`）。
+   只匹配「纯字体声明」的字面形状，出现拼接痕迹（`+`/`(`/`?`/`:`）的一律跳过 —— 那是 Canvas `ctx.font`。
+2. **可达性底线用 `!important`**：壳层 CSS 在 `<head>`、先于三域样式，同优先级靠文档顺序必输，
+   压不过模板里的 `outline:none`。
+3. **UNIFY_MAP 保留旧调色板原值兜底**：模板是「原样并入、口径零改动」的，
+   换调色板后必须回头把旧值也映射掉，否则旧墨局部残留。
+4. **合并层必须自己装配短线双页**：`render_html()` 依赖 pandas/numpy（读 parquet 算 KPI/ST 横幅），
+   而合并层被要求仅用标准库（见 `ci.yml`），旧仓布局的 `domains/` 也未必有 `data/`。
+   故在 `web/build.py` 复刻它**必须的两步**：克隆 `bb_` 黑盒页 + 替换三个占位符。
+5. **文案与持有上限从域源码抽取、KPI 从 payload 现算**：`STRAT_DOC`/`STRAT_DOC_BB`
+   正则抽取自 `build_report.py`，`MAX_HOLD` 取自 `engine.py`（不硬编码、不复制一份）；
+   见 `_quant_lab_docs`/`_max_hold`。上游改排版/文案需顺手核对这里（按字面/形状抽取，变了会静默落空）。
+6. **`__ST_BANNER__` 在合并页留空**：它是「ST 数据新鲜度」告警，需读 parquet；
+   合并页顶部状态灯/数据日由壳层统一给出，域内不重复挂第二条。
+7. **涨跌文字用 `--up-ink/--down-ink`**：`--up/--down` 只给填充/线条/图表；
+   文字直接改模板规则（改源头），因为模板存在三层特异性写法，系统层覆盖盖不住。
+
+### 验证记录
+
+- 本地：`pytest tests/ --ignore=tests/incident` **230 passed / 7 skipped**（`tests/web` 71 → 78）
+- 产物：`python -m web.build --src domains --out web/dist/index.html --payload-dir state/payload`
+  → 2.47MB；`__STRAT_DOC__`/`__ST_BANNER__`/`__MAX_HOLD__`/`__KPI_BLOCK__`/`__DATA__*` 均为 0
+- Playwright（1440 与 390 视口，三域 + 黑盒页）：**0 pageerror / 0 console error**；
+  黑盒页 2 个 canvas、KPI 表 5 行、正文可见；动量 ↔ 黑盒切换正常
+- `scorecard.py`：对比度 0 不达标、无页面横溢、quant-lab 字号 6 档 / 字体 1 支 / 圆角 4 档
+
+### 遗留事项
+
+- `<small>` 仍是 UA 默认 10.8333px（仅 etf 10 处）：改成 11px 收益极小，且有缩小「元」
+  单位标签的风险，暂不动。
+- 无 `tabindex` 的可点 `div` 未补键盘可达（改动跨三模板，风险大，待专项）。
+- `tools/` 缺「排版统一」自动体检：`scope.unify_type/unify_fonts` 是按字面量/形状替换，
+  上游改写法会静默落空（表现是「字号又散了」，不报错），目前靠 `qh-shots/scorecard.py` 人工审计。
+- 仓根 `README.md` 第 8 行仍指向旧 handoff 路径（见文首「已知悬空引用」）。
+
+---
+
+## 个股数据链故障与恢复（2026-09-22）
+
 **故障现象**：2026-09-14 起 `data-stock-incr` 定时任务连续失败，个股数据仓停在 09-11
 （index/etf 正常）。三根因 + 数据缺口全部定位、修复、回补并验证。
 

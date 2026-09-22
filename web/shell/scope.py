@@ -73,6 +73,9 @@ __all__ = [
     "CHIP_ON",
     "decl",
     "unify_colors",
+    "unify_type",
+    "unify_fonts",
+    "unify_ink",
     "scope_css",
     "scope_html_fragment",
     "scope_id",
@@ -90,36 +93,69 @@ __all__ = [
 # ⚠️ 改色只改这里。模板里 `:root{}` 写的原值会被本模块的块覆盖（见
 #    scope_html_fragment 的顺序注释）；写死在选择器/JS 里的十六进制色由
 #    UNIFY_MAP 兜底。
+#
+# 设计方向：「行情纸」（2026-09 二次统一）。不是 SaaS 仪表盘，是一张**当日行情纸**：
+#   · 数字是主角 —— 等宽 + tabular-nums + 右对齐，列能对齐才扫得快
+#   · 暖色是信息 —— 全站只有「涨/跌」和真警示用暖色，结构性颜色一律冷墨
+#   · 一纸一天 —— 报头写明数据日与覆盖率，这是一份带日期的快照，不是活应用
+#   · 硬朗不软 —— 圆角三档封顶 12px，靠发丝线分隔而不是阴影
+# 具体到色值的理由：
+#   --bg 冷纸白而非暖米（暖米 + 陶土色 = 生成式页面的头号默认脸）
+#   --muted/--dim 提到 AA（旧值 #88867E / #A9A79E 在浅底上只有 3.3 / 2.3，全站 100+ 处不达标）
+#   --up-ink/--down-ink 是涨跌的**文字档**：填充/线条用饱和的 --up/--down，
+#     文字用更深的一档（#D5423E 在白底只有 4.49、在纸底 4.04，红绿数字全都读不清）
 PALETTE: dict[str, str] = {
     # 底 / 卡片
-    "--bg": "#F6F6F4",
+    "--bg": "#FAFAFB",
     "--card": "#FFFFFF",
-    "--card-2": "#FAFAF7",
-    # 文字三档
-    "--ink": "#26251F",
-    "--ink2": "#3D3C34",
-    "--text": "#26251F",          # stock 的正文变量名
-    "--muted": "#88867E",
-    "--sub": "#88867E",
-    "--dim": "#A9A79E",
-    "--muted-2": "#A9A79E",
+    "--card-2": "#F5F6F8",
+    # 文字四档（全部 ≥4.5:1 于纸底与卡片）
+    "--ink": "#14171C",
+    "--ink2": "#2E333B",
+    "--text": "#14171C",          # stock 的正文变量名
+    "--muted": "#5C636E",         # 5.5:1 on --bg
+    "--sub": "#5C636E",
+    "--dim": "#646B76",           # 4.68:1 on --primary-light（最浅的那个底）
+    "--muted-2": "#646B76",
     # 描边
-    "--line": "#E4E3DC",
-    # 强调色
+    "--line": "#E1E4E9",
+    # 强调色（结构性 = 冷墨蓝；暖色留给涨跌）
     "--primary": "#185FA5",
     "--blue": "#185FA5",
-    "--primary-light": "#E6F1FB",
-    "--accent": "#854F0B",
-    "--warn": "#854F0B",
-    "--amber": "#854F0B",
+    "--primary-light": "#E8F0F9",
+    "--accent": "#185FA5",
+    "--warn": "#8A5300",          # 真警示（琥珀）—— 几何平均留暖，语义保留
+    "--amber": "#8A5300",
+    "--accent-warm": "#8A5300",
+    "--warn-bg": "#FDF6E9",
+    "--warn-line": "#EFD9AE",
+    "--warn-ink": "#5A3600",       # 4.9:1 on 琥珀徽章 #EF9F27
     "--purple": "#534AB7",
     # ★ 涨跌：全站统一中国惯例（红涨绿跌）
-    "--up": "#D5423E",
-    "--down": "#1D9E75",
+    "--up": "#D5423E",            # 涨 · 填充/线条（锁：tests/web/test_scope.py）
+    "--down": "#1D9E75",          # 跌 · 填充/线条（锁）
+    "--up-ink": "#B3342F",        # 涨 · 文字（5.5:1 on --bg）
+    "--down-ink": "#0F6E56",      # 跌 · 文字（5.6:1 on --bg）
     # 形状
-    "--radius": "14px",
+    "--radius": "8px",
+    "--r-sm": "4px",
+    "--r-md": "8px",
+    "--r-lg": "12px",
     "--shadow": "none",
-    "--num": '-apple-system,"PingFang SC","Helvetica Neue",sans-serif',
+    # 字号阶（6 档 + 2 个行高）—— 取代模板里 20 个随手写的大小
+    "--fs-xs": "11px",
+    "--fs-sm": "12px",
+    "--fs-md": "13px",
+    "--fs-base": "14px",
+    "--fs-lg": "16px",
+    "--fs-xl": "20px",
+    "--fs-2xl": "26px",
+    "--lh-tight": "1.3",
+    "--lh-base": "1.6",
+    "--measure": "68ch",          # 正文行长上限
+    # 字体：正文=中文屏幕黑体（三域共用同一支），数字=等宽（行情纸的本行）
+    "--num": 'ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace',
+    "--font-text": '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Source Han Sans SC","Noto Sans CJK SC",system-ui,sans-serif',
 }
 
 
@@ -159,39 +195,78 @@ THEMES: dict[str, DomainTheme] = {
 #    表现=样式回退、不报错。改模板配色后请顺手核对这里。
 # ⚠️ 不含「数据系列色」（选股雷达图、回测曲线的推荐组合/沪深300 等）：那些是
 #    数据语义、不是观感，统一会让不同曲线分不开。
+#  注意：**目标值一律引用 PALETTE**，不再写第二份字面量 —— 旧版把目标值写成
+#  #FAFAF7/#F6F6F4 之类的字面量，改 PALETTE 时这里会静默不同步（"换了个调色板、
+#  模板写死的色还留在旧调色板"）。
 UNIFY_MAP: tuple[tuple[str, str], ...] = (
     # 浅底 → 基准中性浅底
-    ("#F6FAFE", "#FAFAF7"), ("#F0F6FD", "#FAFAF7"), ("#F0F7FE", "#FAFAF7"),
-    ("#EAF2FB", "#FAFAF7"), ("#F8FBFE", "#FAFAF7"), ("#EEF4FA", "#FAFAF7"),
-    ("#EFF4FF", "#FAFAF7"), ("#F4F6FB", "#F6F6F4"), ("#EEF1F8", "#FAFAF7"),
-    # 描边（冷蓝灰 → 暖灰）
-    ("#DDE8F4", "#E4E3DC"), ("#E2E6F0", "#E4E3DC"), ("#D1D5DB", "#E4E3DC"),
+    ("#F6FAFE", PALETTE["--card-2"]), ("#F0F6FD", PALETTE["--card-2"]),
+    ("#F0F7FE", PALETTE["--card-2"]), ("#EAF2FB", PALETTE["--card-2"]),
+    ("#F8FBFE", PALETTE["--card-2"]), ("#EEF4FA", PALETTE["--card-2"]),
+    ("#EFF4FF", PALETTE["--card-2"]), ("#F4F6FB", PALETTE["--bg"]),
+    ("#EEF1F8", PALETTE["--card-2"]),
+    # 描边（冷蓝灰 → 中性灰）
+    ("#DDE8F4", PALETTE["--line"]), ("#E2E6F0", PALETTE["--line"]),
+    ("#D1D5DB", PALETTE["--line"]), ("#EAF1F9", PALETTE["--line"]),
     # 次级文字 / 坐标轴（多写在图表 JS 里，CSS 够不着）
-    ("#8AA3C0", "#88867E"), ("#5B7BA3", "#88867E"), ("#5A6480", "#88867E"),
-    ("#8B93A8", "#88867E"), ("#6B7280", "#88867E"),
-    ("#374151", "#3D3C34"), ("#2B4A6F", "#3D3C34"),
-    # 正文（藏青 → 暖黑）
-    ("#16324F", "#26251F"), ("#1A2040", "#26251F"),
+    ("#8AA3C0", PALETTE["--sub"]), ("#5B7BA3", PALETTE["--sub"]),
+    ("#5A6480", PALETTE["--sub"]), ("#8B93A8", PALETTE["--sub"]),
+    ("#6B7280", PALETTE["--sub"]),
+    ("#374151", PALETTE["--ink2"]), ("#2B4A6F", PALETTE["--ink2"]),
+    # 正文（藏青 → 墨黑）
+    ("#16324F", PALETTE["--ink"]), ("#1A2040", PALETTE["--ink"]),
+    # ★ 旧调色板兜底：这些是**上一版 PALETTE 的原值**（不是随手写的某个蓝/灰），
+    #   而且写在选择器 / 内联 style / 图表 JS 里 —— 不走 `:root` 令牌块，
+    #   改 PALETTE 时不会跟着变，页面就成了“新调色板 + 旧色”的混搭。
+    #   实测漏网：quant-lab 的 `.sub-h`/`.doc h3` 标题（旧墨）、`.nav-item:hover`
+    #   与 `tr:hover td` 底色（旧卡底）、图表坐标轴/图例文字（旧灰 3.3:1）。
+    #   一律指回当前 token；换代时只需改 PALETTE。
+    ("#F6F6F4", PALETTE["--bg"]), ("#FAFAF7", PALETTE["--card-2"]),
+    ("#E4E3DC", PALETTE["--line"]), ("#F0EFE9", PALETTE["--line"]),
+    ("#26251F", PALETTE["--ink"]), ("#3D3C34", PALETTE["--ink2"]),
+    ("#44423B", PALETTE["--ink2"]),
+    ("#88867E", PALETTE["--sub"]), ("#A9A79E", PALETTE["--dim"]),
+    ("#854F0B", PALETTE["--warn"]), ("#633806", PALETTE["--warn-ink"]),
+    # etf 空态卡片的虚线描边还是旧蓝 —— 结构色一律中性
+    ("#B9CFE6", PALETTE["--line"]),
     # 强调蓝
-    ("#2B6CB0", "#185FA5"), ("#2563EB", "#185FA5"), ("#1D4ED8", "#185FA5"),
-    ("#DBEAFE", "#E6F1FB"),
-    ("rgba(43,108,176,", "rgba(24,95,165,"), ("rgba(37,99,235,", "rgba(24,95,165,"),
+    ("#2B6CB0", PALETTE["--primary"]), ("#4A8FD4", PALETTE["--primary"]),
+    ("#2563EB", PALETTE["--primary"]), ("#1D4ED8", PALETTE["--primary"]),
+    ("#DBEAFE", PALETTE["--primary-light"]),
+    ("rgba(43,108,176,", "rgba(24,95,165,"),
+    ("rgba(37,99,235,", "rgba(24,95,165,"),
     # 基准线（金色虚线 → 调色板里的金）
     ("#8A6D3B", "#B07A2A"),
-    # 琥珀警示
-    ("#D97706", "#854F0B"), ("#B45309", "#854F0B"), ("#78350F", "#633806"),
+    # 琥珀警示 → 调色板的 warn（已经过 AA 校对）
+    ("#D97706", PALETTE["--warn"]), ("#B45309", PALETTE["--warn"]),
+    ("#78350F", PALETTE["--warn-ink"]), ("#8a6420", PALETTE["--warn-ink"]),
     ("#FBBF24", "#EF9F27"), ("#FCD9B6", "#FAEEDA"),
-    # 涨跌色相（同色系对齐，方向由 PALETTE 的 --up/--down 决定）
-    ("#E0443C", "#D5423E"), ("#C0392B", "#D5423E"),
-    ("#16A34A", "#1D9E75"), ("#177245", "#0F6E56"), ("#F0F9F2", "#E1F5EE"),
-    # 弹窗遮罩 / 阴影（藏青 → 暖黑）
-    ("rgba(30,41,80,", "rgba(38,37,31,"),
+    ("#FDF8EC", PALETTE["--warn-bg"]), ("#F3E2B5", PALETTE["--warn-line"]),
+    # 涨跌"填充档"色相 → PALETTE 的 --up/--down
+    ("#E0443C", PALETTE["--up"]), ("#C0392B", PALETTE["--up"]),
+    ("#16A34A", PALETTE["--down"]), ("#177245", "#0F6E56"),
+    ("#F0F9F2", "#E1F5EE"),
+    # 弹窗遮罩 / 阴影（藏青 → 墨黑）
+    ("rgba(30,41,80,", "rgba(20,23,28,"),
+    ("rgba(22,50,79,", "rgba(20,23,28,"),
+    # ★ 投影：整站只留一个中性档。旧的「蓝色发光按钮」是生成式页面的典型 tell，
+    #   与 PALETTE 自带的 --shadow:none（发丝线分隔）也矛盾；
+    #   只有真的浮在内容之上的层（抽屉 / 吐司）才留一层中性投影。
+    ("box-shadow:0 4px 14px rgba(24,95,165,.35)", "box-shadow:none"),
+    ("box-shadow:0 4px 12px rgba(24,95,165,.35)", "box-shadow:none"),
+    ("box-shadow:0 4px 16px rgba(0,0,0,.2)", "box-shadow:0 4px 16px rgba(20,23,28,.16)"),
+    ("rgba(0,0,0,.12)", "rgba(20,23,28,.08)"),
 )
 
 # 逐域单独替换（stock 的 #DC2626 是它的**跌**色：PALETTE 里跌色是绿的，
 # 所以只在 stock 段把它映射成红——即「跌」→ 红，完成红涨绿跌的翻向）。
 UNIFY_MAP_BY_DOMAIN: dict[str, tuple[tuple[str, str], ...]] = {
-    "stock": (("#DC2626", "#D5423E"),),
+    "stock": (("#DC2626", PALETTE["--up"]),
+              # ★ rgba 形式的旧涨跌底色：UNIFY_MAP 只认 #hex，这两个漏在下面，
+              #   结果是"涨"行拿着绿的底（22,163,74）+ 红的字（var(--up)）——
+              #   翻向只翻了一半。只在本域翻：绿色 rgba 在别的域可能是合法的跌底色。
+              ("rgba(22,163,74,", "rgba(213,66,62,"),
+              ("rgba(220,38,38,", "rgba(29,158,117,"),),
 }
 
 
@@ -205,6 +280,158 @@ def unify_colors(text: str, domain: str = "") -> str:
     for old, new in UNIFY_MAP_BY_DOMAIN.get(domain, ()):
         text = text.replace(old, new)
     return text
+
+
+# ---------------------------------------------------------------------------
+# ★ 字号 / 圆角 / 字体同一化：模板里 20 个随手写的 font-size、9 个随手写的圆角、
+#   4 支各不相同的 font-family，在这里收敛到 PALETTE 的字号阶 / 圆角档 / 两支字体。
+# ---------------------------------------------------------------------------
+# 和 UNIFY_MAP 同一个套路、同一处生效范围（整段片段：CSS 与 JS 拼串一起改）。
+# 理由也一样：模板是「三域原样并入、口径零改动」的，不该为了排版去逐个改模板。
+#
+# ★ 这是按**字面量**替换：上游改了写法（大小写、压缩空格）就静默落空 —— 表现是
+#   "字号又散了"，不报错。改模板排版后请顺手核对这里（tools/ 无自动体检，靠审计）。
+#
+# 字号映射原则：就近归到阶上，**不改变量级**（12.5→13 而不是→14）。
+# 10/10.5/10.8333 -> --fs-xs(11)   （旧值 10~11.5 共 5 种挤在一起，本质是同一个「小字」）
+# 11 -> xs · 11.5/12 -> sm · 12.5/13 -> md · 13.5/14/14.5 -> base
+# 15/16 -> lg · 17/18/19/20 -> xl · 22/24/26/32 -> 2xl
+_TYPE_MAP: tuple[tuple[str, str], ...] = (
+    ("font-size:10px", "font-size:var(--fs-xs)"),
+    ("font-size:10.5px", "font-size:var(--fs-xs)"),
+    ("font-size:10.8333px", "font-size:var(--fs-xs)"),
+    ("font-size:11px", "font-size:var(--fs-xs)"),
+    ("font-size:11.5px", "font-size:var(--fs-sm)"),
+    ("font-size:12px", "font-size:var(--fs-sm)"),
+    ("font-size:12.5px", "font-size:var(--fs-md)"),
+    ("font-size:13px", "font-size:var(--fs-md)"),
+    ("font-size:13.5px", "font-size:var(--fs-base)"),
+    ("font-size:14px", "font-size:var(--fs-base)"),
+    ("font-size:14.5px", "font-size:var(--fs-base)"),
+    ("font-size:15px", "font-size:var(--fs-lg)"),
+    ("font-size:16px", "font-size:var(--fs-lg)"),
+    ("font-size:17px", "font-size:var(--fs-xl)"),
+    ("font-size:18px", "font-size:var(--fs-xl)"),
+    ("font-size:19px", "font-size:var(--fs-xl)"),
+    ("font-size:20px", "font-size:var(--fs-xl)"),
+    ("font-size:22px", "font-size:var(--fs-2xl)"),
+    ("font-size:24px", "font-size:var(--fs-2xl)"),
+    ("font-size:26px", "font-size:var(--fs-2xl)"),
+    ("font-size:32px", "font-size:var(--fs-2xl)"),
+    ("font-size:9px", "font-size:var(--fs-xs)"),
+)
+
+# 圆角：三档封顶 12px。50%（正圆）与 999px（药丸）语义明确，保持不动。
+_RADIUS_MAP: tuple[tuple[str, str], ...] = (
+    ("border-radius:2px", "border-radius:var(--r-sm)"),
+    ("border-radius:3px", "border-radius:var(--r-sm)"),
+    ("border-radius:4px", "border-radius:var(--r-sm)"),
+    ("border-radius:5px", "border-radius:var(--r-sm)"),
+    ("border-radius:6px", "border-radius:var(--r-sm)"),
+    ("border-radius:7px", "border-radius:var(--r-sm)"),
+    ("border-radius:8px", "border-radius:var(--r-md)"),
+    ("border-radius:9px", "border-radius:var(--r-md)"),
+    ("border-radius:10px", "border-radius:var(--r-md)"),
+    ("border-radius:12px", "border-radius:var(--r-md)"),
+    ("border-radius:14px", "border-radius:var(--r-md)"),
+    ("border-radius:16px", "border-radius:var(--r-lg)"),
+    ("border-radius:18px", "border-radius:var(--r-lg)"),
+    ("border-radius:20px", "border-radius:var(--r-lg)"),
+    ("border-radius:24px", "border-radius:var(--r-lg)"),
+)
+
+def unify_type(text: str) -> str:
+    """字号 / 圆角字面量 -> 字号阶与圆角令牌。"""
+    for old, new in _TYPE_MAP:
+        text = text.replace(old, new)
+    for old, new in _RADIUS_MAP:
+        text = text.replace(old, new)
+    # ★ 全大写 + 大字距的分组标签是生成式页面的常驻装饰，而且中文没有大小写，
+    #   它只对夹在中间的英文生效（stock 的「核心功能 / 关于」实际没变）——去掉。
+    text = text.replace("text-transform:uppercase", "text-transform:none")
+    return text
+
+
+# 字体：三域各长了一支，同一域内还混用两支 —— 统一成「正文一支、数字一支」。
+# ★ 用正则而不是字面量表：同一支栈在模板里有单引号/双引号两种写法，字体还可能
+#   藏在 `font:` 简写里（`font:14px/1.6 -apple-system,...`）。字面量替换只认字符，
+#   引号或写法一变就静默漏掉 —— quant-lab 的 302 个节点就是这么漏的（整个域
+#   仍在用旧字体，而记分卡看起来“只剩 1 支”）。
+_LEGACY_FAMS = ("-apple-system", "BlinkMacSystemFont", "PingFang", "YaHei",
+                "Hiragino", "Helvetica", "Segoe UI", "Roboto", "Arial",
+                "sans-serif", "monospace", "system-ui")
+_MONO_FAMS = ("monospace", "Menlo", "Consolas", "Courier", "ui-monospace")
+# 只认「纯字体声明」的字面形状：出现 + ( ) ? : 的都是在拼 JS 字符串
+# （`font-family:"+d+"` 是 Canvas 的 ctx.font），改了会把图表字体拼坏。
+# ★ 值里必须允许连字符 `-`：字体名本身常带（`-apple-system`、`JetBrains Mono` 的
+#   前缀、`ui-monospace`）。旧字符类漏了 `-`，于是 `font:14px/1.6 -apple-system,…`
+#   匹配在 `-` 处断掉、整条声明静默漏掉 —— quant-lab 全域 302 个节点卡在旧字体栈。
+_FONT_DECL_RE = re.compile(r"\b(font(?:-family)?)\s*:\s*([A-Za-z0-9,\s'\"_./%-]+)")
+_FONT_VALUE_OK = re.compile(r"^[A-Za-z0-9,\s'\"_./%-]+$")
+
+
+def _unify_one_font(m: re.Match[str]) -> str:
+    prop, value = m.group(1), m.group(2)
+    if not _FONT_VALUE_OK.match(value):
+        return m.group(0)
+    # 取**最靠前**的旧字体名做切口：tail 里含 monospace 才判等宽。
+    idx = min((value.find(f) for f in _LEGACY_FAMS if f in value), default=-1)
+    if idx < 0:
+        return m.group(0)
+    head = value[:idx]
+    if head.endswith(("'", '"')):        # font-family:"PingFang SC",... 的开引号
+        head = head[:-1]
+    tail = value[idx:]
+    tok = "var(--num)" if any(f in tail for f in _MONO_FAMS) else "var(--font-text)"
+    return f"{prop}:{head}{tok}"
+
+
+def unify_fonts(text: str) -> str:
+    """把模板里写死的字体栈换成 var(--font-text) / var(--num)。"""
+    return _FONT_DECL_RE.sub(_unify_one_font, text)
+
+
+# ---------------------------------------------------------------------------
+# ★ 涨跌的「文字档」：模板里凡是以 --up/--down 当**文字色**的地方，一律换成
+#   更深的那一档。在源头改（改模板自己的规则）而不是另发一条覆盖规则，
+#   是因为模板里存在 `#app-stock .gene-tags .g.up{color:var(--up)}` 这种
+#   三层特异性的写法 —— 系统层发 `#app-stock .up` 根本盖不住（实测白写）。
+#   `--up`（填充档）继续给色块、线条、图表用。
+#   注意 background 用的是 rgba 浅底（不是 var(--up)），不能“有 background 就跳过”，
+#   否则 `.g.up{background:rgba(213,66,62,.08);color:var(--up)}` 也会被跳过 ——
+#   所以判断的是 background 的**值**是不是涨跌色。
+_DECL_BLOCK_RE = re.compile(r"\{([^{}]*)\}")
+_FILLED_RE = re.compile(
+    r"background(?:-color)?\s*:\s*(?:var\(--(?:up|down)\)|#[Dd]5423[eE]|#1[dD]9[eE]75)")
+_INK_RE = re.compile(r"\bcolor\s*:\s*(var\(--up\)|#D5423E|var\(--down\)|#1D9E75)")
+_INK_TO = {"var(--up)": "var(--up-ink)", "#D5423E": "var(--up-ink)",
+           "var(--down)": "var(--down-ink)", "#1D9E75": "var(--down-ink)"}
+
+
+def _ink_one_block(m: re.Match[str]) -> str:
+    body = m.group(1)
+    if "color" not in body or _FILLED_RE.search(body):
+        return m.group(0)
+    return "{" + _INK_RE.sub(
+        lambda mm: "color:" + _INK_TO[mm.group(1)], body) + "}"
+
+
+# 模板里还有写死的内联 `<b style="color:#D5423E">`（etf 的「已触发」就是）——
+# 内联样式没有 { }，块正则抡不到，得单独再过一遍 style="..."。
+_STYLE_ATTR_RE = re.compile(r"style\s*=\s*(\"[^\"]*\"|'[^']*')")
+
+
+def unify_ink(text: str) -> str:
+    """涨跌色当文字时降到「文字档」（填充档不动）。
+
+    两道：CSS 声明块 + 内联 style 属性。
+    """
+    text = _DECL_BLOCK_RE.sub(_ink_one_block, text)
+    return _STYLE_ATTR_RE.sub(
+        lambda m: "style=" + _INK_RE.sub(
+            lambda mm: "color:" + _INK_TO[mm.group(1)], m.group(1)), text)
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -448,12 +675,12 @@ assert decl({"a": "1px"}) == "a:1px;"          # 用法自检
 CHIP: dict[str, str] = {
     "background": "var(--card)",
     "border": "1px solid var(--line)",
-    "border-radius": "16px",
+    "border-radius": "var(--r-sm)",
     "color": "var(--ink)",
     "cursor": "pointer",
     "font-family": "inherit",
-    "font-size": "13px",
-    "padding": "6px 16px",
+    "font-size": "var(--fs-md)",
+    "padding": "6px 14px",
 }
 CHIP_ON: dict[str, str] = {
     "background": "var(--ink)",
@@ -475,11 +702,11 @@ NAV_CONTAINER: dict[str, str] = {
     "--nav-gap": "22px",
     "background": "var(--card)",
     "border": "1px solid var(--line)",
-    "border-radius": "var(--radius)",
+    "border-radius": "var(--r-lg)",
     "flex": f"0 0 {NAV_W}",
     "max-height": "calc(100vh - var(--nav-pt) - var(--nav-pb))",
     "overflow-y": "auto",
-    "padding": "14px 10px",
+    "padding": "12px 8px",
     "position": "sticky",
     "top": "var(--nav-pt)",
     "width": NAV_W,
@@ -498,13 +725,13 @@ NAV_LAYOUT: dict[str, str] = {
 }
 # 导航条目：统一 padding/圆角/字号；**选中一律黑底白字**
 NAV_ITEM: dict[str, str] = {
-    "border-radius": "10px",
+    "border-radius": "var(--r-sm)",
     "color": "var(--muted)",
     "cursor": "pointer",
     "display": "block",
-    "font-size": "13.5px",
+    "font-size": "var(--fs-base)",
     "font-weight": "400",
-    "padding": "8px 10px",
+    "padding": "7px 10px",
 }
 NAV_ITEM_ON: dict[str, str] = {
     "background": "var(--ink)",
@@ -518,26 +745,28 @@ NAV_ITEM_HOVER: dict[str, str] = {"background": "var(--card-2)", "color": "var(-
 #      按用户口径"全部统一"把底色也抹平成白底黑字会**丢信息**，故不动底色。
 BRAND_BLOCK: dict[str, str] = {
     "border-bottom": "1px solid var(--line)",
-    "font-size": "14px",
+    "font-size": "var(--fs-lg)",
     "font-weight": "600",
-    "letter-spacing": ".5px",
-    "line-height": "1.55",
+    "letter-spacing": ".01em",
+    "line-height": "1.5",
     "margin-bottom": "10px",
     "padding": "2px 6px 10px",
 }
+# ★ 不再吃 uppercase + 大字距：跟踪全大写的分组标签是生成式页面的常驻装饰，
+#   而且中文根本没有大小写，它只对夹在中间的英文生效 —— 统一成正常的次级标签。
 GROUP_LABEL: dict[str, str] = {
     "color": "var(--muted)",
-    "font-size": "11px",
-    "letter-spacing": ".08em",
+    "font-size": "var(--fs-xs)",
+    "font-weight": "600",
+    "letter-spacing": ".02em",
     "padding": "6px 10px",
-    "text-transform": "uppercase",
 }
 PILL: dict[str, str] = {
     "border-radius": "999px",
     "display": "inline-block",
-    "font-size": "11.5px",
-    "line-height": "1.6",
-    "padding": "2px 10px",
+    "font-size": "var(--fs-xs)",
+    "line-height": "1.5",
+    "padding": "2px 8px",
     "vertical-align": "1px",
 }
 # 桌面隐藏、仅 ≤900px 显示的导航触发按钮（汉堡）
@@ -606,6 +835,80 @@ COMPONENTS: tuple[tuple[str, dict[str, str], dict[str, tuple[str, ...]]], ...] =
         "etf": (".menu-btn",),
         "stock": (".hamburger",),
     }),
+
+    # ================= 以下为「行情纸」二次统一新增 =================
+    # ★ 数字是主角：表格里的数位必须等宽，否则每行小数点对不齐、扫读时要重新找位。
+    #   只上 tabular-nums、不动字体 —— 中文列（股票名、说明）仍走正文那一支，
+    #   把整张表都换成等宽会让中英混排的字体跟个不同。
+    ("数据列 · 定宽数位",
+     {"font-variant-numeric": "tabular-nums",
+      "font-feature-settings": '"tnum" 1'}, {
+          "quant-lab": ("table th", "table td", ".num", ".val"),
+          "etf": ("table th", "table td", ".num", ".val", ".v"),
+          "stock": ("table th", "table td", ".num", ".score", ".value"),
+      }),
+    ("纯数字字面 · 等宽", {"font-family": "var(--num)"}, {
+        "quant-lab": (".num", ".val", ".kpi b"),
+        "etf": (".num", ".pos-cell .val", ".metric .v"),
+        "stock": (".num", ".score", ".factor-val"),
+    }),
+    # ★ 涨跌分两档（填充档 / 文字档）：--up/--down 是给色块与线条的饱和色，
+    #   当文字用在白底只有 4.49（纸底 4.04）/3.39，红绿数字全都不达标。
+    #   实际换档在 unify_ink() 里做 —— 模板里存在三层特异性的写法
+    #   （`#app-stock .gene-tags .g.up{color:var(--up)}`），在这层发覆盖规则盖不住。
+    # ★ 行长上限：模板里有 161~185 字符的正文行（三倍于易读上限），
+    #   只限正文类容器，不动表格（表格要的就是宽）。
+    ("正文行长上限", {"max-width": "var(--measure)"}, {
+        "quant-lab": (".sub", ".mode-note", ".note"),
+        "etf": (".desc", ".tip", ".note", ".bt-note", ".gauge-nums", "summary", "p"),
+        "stock": (".desc", ".sub", ".note", "p"),
+    }),
+    # ★ 表格桌面密排：发丝线分隔 + 不贴边；移动端另在 <900px 里放开换行
+    ("表格密度", {"border-color": "var(--line)"}, {
+        "quant-lab": ("table th", "table td"),
+        "etf": ("table th", "table td"),
+        "stock": ("table th", "table td"),
+    }),
+    # ★ 点击目标：stock 的删除按钮原本 26x20（低于任何可用性下限）
+    ("次要点击目标下限",
+     {"min-height": "32px", "min-width": "32px",
+      "display": "inline-flex", "align-items": "center",
+      "justify-content": "center"}, {
+          "quant-lab": (".fold-btn",),
+          "stock": (".rm", ".mini-refresh", ".refresh-btn"),
+      }),
+    # ★ 表单控件不吃继承：没声明 font-family 时，input 会用浏览器默认的
+    #   Arial 13.3px —— 于是「三域字体已统一」的页面里会单独冒出一个 Arial。
+    ("表单控件继承排版", {"font-family": "inherit", "font-size": "inherit"}, {
+        "quant-lab": ("input", "select", "textarea", "button"),
+        "etf": ("input", "select", "textarea", "button"),
+        "stock": ("input", "select", "textarea", "button"),
+    }),
+    # ★ etf 的编号方块挂了蓝色发光（旧调色板遗留），行情纸不要发光
+    ("编号方块 · 去发光", {"box-shadow": "none"}, {"etf": (".sec-n",)}),
+    # ★ stock 的侧栏是 fixed（已脱离文档流），.main/.content 不该再当 flex 行容器：
+    #   一旦变成 flex row，里面的 .view/.content 就变成紧挨的 flex item、
+    #   宽度取 max-content —— 移动端实测 545px > 390px 视口，页面横向滚。
+    #   放在「壳层布局」之后同优先级覆盖。★ 千万不能顺手加 width:100%：
+    #   .main 左边已经让给了 fixed 侧栏，再加 100% 就是 100% + 侧栏宽 ——
+    #   实测 1440 视口反而溢出 26px（修好一个域又壊了两个视口）。
+    ("主内容列 · 块流",
+     {"display": "block", "min-width": "0"}, {
+         "stock": (".main", ".content"),
+     }),
+    # ★ 宽表：quant-lab 最大的表 1260px 宽，撑得整页横向滚。
+    #   flex 子项默认 min-width:auto（= min-content = 表宽），不会缩 ——
+    #   必须显式 min-width:0，滚条才会落在卡片里而不是整页。
+    ("主内容列可压缩", {"min-width": "0"}, {
+        "quant-lab": (".wrap",),
+        "etf": (".main",),
+        "stock": (".main",),
+    }),
+    ("宽表容器 · 卡内横滚", {"overflow-x": "auto", "max-width": "100%"}, {
+        "quant-lab": (".card",),
+        "etf": (".card",),
+        "stock": (".card",),
+    }),
 )
 
 # ≤900px 的导航行为：三域统一——quant-lab 收成横向一排，etf/stock 收成抽屉。
@@ -630,25 +933,36 @@ _DRAWER: dict[str, str] = {
 
 NAV_MEDIA: dict[str, dict[str, dict[str, str]]] = {
     "quant-lab": {
-        ".shell": {"flex-direction": "column"},
+        # ★ align-items 必须从 flex-start 改成 stretch：窄屏下 flex-direction 转成
+        #   column 后，flex-start 会让 .wrap 取 max-content 宽度（= 最宽那张表），
+        #   实测 390px 视口下页面宽 1345px —— 整个页面横向滚，手机根本没法看。
+        ".shell": {"flex-direction": "column", "align-items": "stretch"},
+        ".wrap": {"width": "100%", "min-width": "0"},
         ".side": {"width": "100%", "flex": "none", "position": "static",
                   "max-height": "none", "display": "flex",
                   "align-items": "center", "gap": "8px", "padding": "10px 12px"},
-        ".side .brand": {"border": "0", "margin": "0", "font-size": "14px",
+        ".side .brand": {"border": "0", "margin": "0", "font-size": "var(--fs-lg)",
                          "padding": "0 8px 0 2px"},
         ".nav-item": {"display": "inline-block"},
+        # 移动端放开表格换行：桌面要密排扫读，手机要能读完一行
+        "table th": {"white-space": "normal"},
+        "table td": {"white-space": "normal", "overflow-wrap": "anywhere"},
     },
     "etf": {
         ".layout": {"flex-direction": "column", "gap": "16px"},
         ".sidebar": dict(_DRAWER),
         ".sidebar.open": {"transform": "translateX(0)"},
         ".menu-btn": {"display": "flex"},
+        "table th": {"white-space": "normal"},
+        "table td": {"white-space": "normal"},
     },
     "stock": {
         ".sidebar": dict(_DRAWER),
         ".sidebar.show": {"transform": "translateX(0)"},
         ".main": {"margin-left": "0"},
         ".hamburger": {"display": "flex"},
+        "table th": {"white-space": "normal"},
+        "table td": {"white-space": "normal"},
     },
 }
 
@@ -727,10 +1041,10 @@ def scope_html_fragment(html: str, domain: str, *,
     body = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.S)
 
     scoped_css = "\n".join(
-        unify_colors(scope_css(_promote_globals(c, domain), domain), domain)
+        unify_ink(unify_fonts(unify_type(unify_colors(scope_css(_promote_globals(c, domain), domain), domain))))
         for c in css_blocks
     )
-    body = unify_colors(_namespace_ids(body, domain, rename), domain)
+    body = unify_ink(unify_fonts(unify_type(unify_colors(_namespace_ids(body, domain, rename), domain))))
 
     # ★ 顺序关键：theme_block 必须放在域样式**之后**。
     #   模板自己的 `:root{}` 被 _promote_globals 改写成 `#app-{d}{}`，与本模块的
