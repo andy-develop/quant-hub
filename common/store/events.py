@@ -278,7 +278,10 @@ def load_events(name: str, *, start: str | None = None, end: str | None = None,
     root = root or os.environ.get("QH_DATA_ROOT", "data")
     base = os.path.join(root, EVENT_DIR, name)
 
-    want = list(columns) if columns else None
+    # date 恒含（读取列裁剪强制前缀 ["date"] + want）；若调用方 columns 里带了
+    # date，剔除之，否则前缀拼接产生重复 date 列 -> df["date"] 变 DataFrame
+    # -> pd.to_datetime 报 cannot assemble with duplicate keys
+    want = [c for c in columns if c != "date"] if columns else None
     frames = []
     for p in _event_files(base):
         try:
