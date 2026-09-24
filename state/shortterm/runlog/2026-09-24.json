@@ -1,0 +1,10 @@
+{
+  "domain": "shortterm",
+  "run_date": "2026-09-24",
+  "trigger": "schedule",
+  "stages": {
+    "strategy_pm": "ok",
+    "payload_files": 2
+  },
+  "updated_at": "2026-09-24T22:14:50+08:00"
+}
