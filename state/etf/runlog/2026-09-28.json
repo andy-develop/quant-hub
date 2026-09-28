@@ -1,0 +1,9 @@
+{
+  "domain": "etf",
+  "run_date": "2026-09-28",
+  "trigger": "publish",
+  "stages": {
+    "forward_etf": 3
+  },
+  "updated_at": "2026-09-28T13:19:12+08:00"
+}
